@@ -1,0 +1,85 @@
+# Config file for running paleotopography.
+# Note: need to indent with spaces and NOT tabs!
+# --- input files
+InputFiles:
+    plate_kinematics:
+        # --- plate model files
+        model_name: 'phase2NNR'
+        model_dir: '/Users/ssin4735/Documents/PROJECT/PhD Project/Codes and Data/BhuDM/Zahirovic_etal_2022_GDJ_NNR'
+        rotation_files:
+            - 'CombinedRotations.rot'
+        topology_files:
+           - 'Feature_Geometries.gpml'
+           - 'Andes_Flat_Slabs_Topologies.gpml'
+           - 'NorthAmerica_FlatSlab.gpml'
+           - 'Plate_Boundaries.gpml'
+        agegrid: "/Users/ssin4735/Documents/PROJECT/PhD Project/Codes and Data/BhuDM/SeafloorAgegrid"
+         # relative to 'model_dir'
+        coastline_file: 'StaticGeometries/Coastlines/Global_coastlines_low_res.shp'
+        static_polygon: 'StaticGeometries/StaticPolygons/Global_EarthByte_GPlates_PresentDay_StaticPlatePolygons.shp'
+        continents: 'StaticGeometries/ContinentalPolygons/Global_EarthByte_GPlates_PresentDay_ContinentalPolygons.shp'
+    # Time Dependent Raster 
+    mantle_convection:
+        depth: [16,31,47,62,140,155,171, 186,202, 217,233,268,293,323,357,396,439,487,540,597,660,726,798,874,954,1040]
+        original_temp_folder: "/Volumes/Satyam/STLR410MaM1/temp_dimensional"
+        original_vel_folder: "/Volumes/Satyam/STLR410MaM1/vz_dimensional"
+        original_velx_folder: "/Volumes/Satyam/STLR410MaM1/vx_dimensional"
+        original_vely_folder: "/Volumes/Satyam/STLR410MaM1/vy_dimensional"
+        original_visc_folder: "/Volumes/Satyam/STLR410MaM1/visc"
+        new_temp_folder: "/Volumes/Satyam/Paleotopography/STLR410MaM1/temp_dimensional"
+        new_vel_folder: "/Volumes/Satyam/Paleotopography/STLR410MaM1/vz_dimensional"
+        new_velx_folder: "/Volumes/Satyam/Paleotopography/STLR410MaM1/vx_dimensional"
+        new_vely_folder: "/Volumes/Satyam/Paleotopography/STLR410MaM1/vy_dimensional"
+        new_visc_folder: "/Volumes/Satyam/Paleotopography/STLR410MaM1/visc"
+        model_name: 'phase2'
+        model_dir: '/Users/ssin4735/Documents/PROJECT/PhD Project/Codes and Data/BhuDM/Zahirovic_etal_2022_GDJ_NNR'
+        rotation_files:
+           - 'CombinedRotations.rot'
+        topology_files:
+           - 'Feature_Geometries.gpml'
+           - 'Flat_Slabs.gpml'
+           - 'Plate_Boundaries.gpml'
+    precipitation:
+        precipitation_folder: "/Users/ssin4735/Documents/PROJECT/PhD Project/Codes and Data/Part 2/A_DEEPTIMETOPO/Data/Precipitation/Li"
+        model_name: 'PALEOMAP'
+        model_dir: r'/Users/ssin4735/Documents/PROJECT/PhD Project/Codes and Data/Part 2/A_DEEPTIMETOPO/Data/PALEOMAP Global Plate Model'
+        rotation_files:
+            - 'PALEOMAP_PlateModel.rot'
+        topology_files:
+            - 'PALEOMAP_PlatePolygons.gpml'
+            - 'PALEOMAP_PoliticalBoundaries.gpml'
+
+    # --- training files
+    Raster:
+        ETOPO_FILE: "/Users/ssin4735/Documents/PROJECT/PhD Project/Codes and Data/Part 2/A_DEEPTIMETOPO/Data/Smoothed ETopo.tif"  # ETOPO grid in meters (can be NetCDF or GeoTiff)
+        Raster_type: "Elevation"
+ 
+# --- name of output directories
+OutputFiles:
+    # Output Directory
+    output_dir: "EBM"
+
+
+# --- set parameters
+TimeParameters:
+    time_min: 0.
+    time_max: 410
+    time_step: 1
+
+
+Parameters:
+    time_window_size: 15. #### size of time window for calculating mean
+    weighted_mean: True  #### whether you wanted to use a weighted mean. In Weighted Mean, recent times will have greator weights
+    mesh_refinement_level: 9  # The initial positions of crustal points are evenly distributed within the designated region. At mesh refinement level zero, the points are approximately 20 degrees apart. Each increase in the density level results in a halving of the spacing between points. Higher refinement level will take longer time to run.
+    mantle_optimised_id: 666666    ### Specify reference frame here
+    paleomag_id: 0     
+    # for parts that have multiprocessing, specify CPU number
+    number_of_cpus: -1  ### No of cores to use or None for a single core
+   
+
+GridParameters:
+    # Control resolution parameters of the NetCDF
+    grid_spacing: 0.1  # spacing in degrees
+    compression:     ### this option is used to compress netcdf to smaller file while saving
+        zlib: True  
+        complevel: 5
