@@ -1,0 +1,37 @@
+Metadata-Version: 2.1
+Name: pyDTDM
+Version: 0.1.0
+Summary: A library 
+Home-page: https://github.com/singhsatyampratap/pyDTDM
+Author: Satyam Pratap Singh
+Author-email: singhsatyampratap@gmail.com
+Classifier: Programming Language :: Python :: 3
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: scipy
+Requires-Dist: joblib
+Requires-Dist: pandas
+Requires-Dist: geopandas
+Requires-Dist: gplately
+Requires-Dist: numpy
+Requires-Dist: matplotlib
+Requires-Dist: seaborn
+Requires-Dist: cartopy
+Requires-Dist: stripy
+Requires-Dist: shapely
+Requires-Dist: xarray
+Requires-Dist: rasterio
+Requires-Dist: scikit-learn
+Requires-Dist: tensorflow
+Requires-Dist: torch
+Requires-Dist: keras
+Requires-Dist: pickle5
+Requires-Dist: pyarrow
+Requires-Dist: parquet
+
+# pyDTDM
+pyDTDM: A Python library for deep time data mining, offering efficient tools to analyze spatiotemporal raster, vector and gpml datasets. 
+

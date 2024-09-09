@@ -26,11 +26,11 @@ InputFiles:
         original_velx_folder: "/Volumes/Satyam/STLR410MaM1/STLR410MaM1/vx_dimensional"
         original_vely_folder: "/Volumes/Satyam/STLR410MaM1/STLR410MaM1/vy_dimensional"
         original_visc_folder: "/Volumes/Satyam/STLR410MaM1/STLR410MaM1/visc"
-        new_temp_folder: "/Volumes/Satyam/Paleotopography/STLR410MaM1/temp_dimensional"
-        new_vel_folder: "/Volumes/Satyam/Paleotopography/STLR410MaM1/vz_dimensional"
-        new_velx_folder: "/Volumes/Satyam/Paleotopography/STLR410MaM1/vx_dimensional"
-        new_vely_folder: "/Volumes/Satyam/Paleotopography/STLR410MaM1/vy_dimensional"
-        new_visc_folder: "/Volumes/Satyam/Paleotopography/STLR410MaM1/visc"
+        new_temp_folder: "/Volumes/Satyam/Paleotopography/STLR410MaM1/STLR410MaM1/temp_dimensional"
+        new_vel_folder: "/Volumes/Satyam/Paleotopography/STLR410MaM1/STLR410MaM1/vz_dimensional"
+        new_velx_folder: "/Volumes/Satyam/Paleotopography/STLR410MaM1/STLR410MaM1/vx_dimensional"
+        new_vely_folder: "/Volumes/Satyam/Paleotopography/STLR410MaM1/STLR410MaM1/vy_dimensional"
+        new_visc_folder: "/Volumes/Satyam/Paleotopography/STLR410MaM1/STLR410MaM1/visc"
         model_name: 'phase2'
         model_dir: '/Users/ssin4735/Documents/PROJECT/PhD Project/Codes and Data/BhuDM/Zahirovic_etal_2022_GDJ_NNR'
         rotation_files:
@@ -53,11 +53,11 @@ InputFiles:
     Raster:
         ETOPO_FILE: "/Users/ssin4735/Documents/PROJECT/PhD Project/Codes and Data/Part 2/A_DEEPTIMETOPO/Data/Smoothed ETopo.tif"  # ETOPO grid in meters (can be NetCDF or GeoTiff)
         Raster_type: "Elevation"
- 
+    Area_of_Interest: "/Users/ssin4735/Documents/GitHub/pyDTDM/MountainShapeFiles/GMBA_Inventory_v2.0_standard 2"
 # --- name of output directories
 OutputFiles:
     # Output Directory
-    output_dir: "EBM"
+    output_dir: "/Volumes/Satyam/EBMTestForBHP"
 
 
 # --- set parameters

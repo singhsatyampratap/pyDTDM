@@ -13,6 +13,7 @@ import time
 from shapely.geometry import Point,Polygon
 from shapely.prepared import prep
 from joblib import Parallel, delayed
+import shapely
 import math
 from scipy.stats import binned_statistic_2d
 import xarray as xr
@@ -27,10 +28,64 @@ import cartopy.crs as ccrs
 import warnings
 Etopo_REED = get_cmap('ETOPO1-Reed.cpt')
 from rasterio.transform import from_origin
+import ptt
+
+from geopy import Point as GeopyPoint
+from geopy.distance import geodesic
+
+from scipy.interpolate import interp1d
 
 
 
 
+
+from sklearn.neighbors import KNeighborsRegressor
+from scipy.spatial import cKDTree
+from scipy.ndimage import gaussian_filter
+
+
+
+
+def post_process_grid(data, output_path,data_typ, n_neighbors=3, threshold_distance=40):
+    # Load the main NetCDF file
+    # data = xr.open_dataset(file_path)
+    elevation = data
+
+    # Get the coordinates of the valid data points and their values
+    valid_points = np.column_stack(np.where(~np.isnan(elevation)))
+    valid_values = elevation.values[~np.isnan(elevation)]
+
+    # Get the coordinates of the NaN data points
+    nan_points = np.column_stack(np.where(np.isnan(elevation)))
+
+    # Create a KDTree for the valid points
+    tree = cKDTree(valid_points)
+
+    # Find the nearest neighbors for NaN points
+    distances, _ = tree.query(nan_points)
+
+    # Filter NaN points within the threshold distance
+    close_nan_points = nan_points[distances < threshold_distance]
+
+
+    # Perform KNN interpolation only for close NaN points
+    if len(close_nan_points) > 0:
+        knn = KNeighborsRegressor(n_neighbors=n_neighbors)
+
+        # Train the model with all available data
+        knn.fit(valid_points, valid_values)
+
+        # Predict values at the close_nan_points
+        interpolated_values = knn.predict(close_nan_points)
+        
+        # Assign interpolated values to the elevation raster
+        elevation.values[tuple(close_nan_points.T)] = interpolated_values
+
+        print(f'Interpolated {len(close_nan_points)} points')
+
+    # Convert the numpy array back to an xarray DataArray
+    elevation_interp = xr.DataArray(elevation, dims=elevation.dims, coords=elevation.coords)
+    return elevation_interp
 
 def create_directory_if_not_exists(directory_path):
     if not os.path.exists(directory_path):
@@ -90,6 +145,32 @@ def find_filename_with_number(folder, target_number):
 
 
 def find_filename_with_number(folder, target_number):
+    files = glob.glob(f"{folder}/*")
+    pattern = rf'\b{target_number}\b'  # Regex pattern to match the exact target number as a whole word
+
+    for file_path in files:
+        file_name = os.path.basename(file_path)
+        if re.search(pattern, file_name):
+            return file_path
+    
+    return None  # Return None if no matching filename found
+
+def find_filename_with_number1(folder, target_number):
+    files = glob.glob(f"{folder}/*")
+    # Regex pattern to match the target number, including numbers with a decimal point
+    pattern = re.compile(r'(\d+(\.\d+)?)')
+    
+    for file_name in files:
+        # Find all numbers in the filename
+        matches = pattern.findall(file_name)
+        for match in matches:
+            number = float(match[0])  # Convert the matched number to float
+            if number == target_number:
+                return file_name
+    return None
+
+
+def find_filename_with_number2(folder, target_number):
     files = glob.glob(f"{folder}/*")
     pattern = rf'\b{target_number}\b'  # Regex pattern to match the exact target number as a whole word
 
@@ -522,80 +603,7 @@ def delete_empty_folders(folder_path):
             
         
                     
-def plotgdf(gdf,model,column=None,mollweide=False,time=0,cbar=False,quick=True,**kwargs):
-    
-    cmap = kwargs.get('cmap', None)
-    vmin = kwargs.get('vmin', None)
-    vmax = kwargs.get('vmax', None)
-    label = kwargs.get('label', None)
-    title=kwargs.get('title', None)
-    features=kwargs.get('features',True)
-    color=kwargs.get('color',None)
-    markersize=kwargs.get('markersize',10)
-    orientation=kwargs.get('orientation','vertical')
-    shrink=kwargs.get('shrink',0.5)
-    extend=kwargs.get('extend',None)
-    
-    central_longitude=kwargs.get('central_longitude',0)
-    figsize=kwargs.get('figsize',(12,8))
-    
-    
-    
-    
-    
-    
-    fig = plt.figure(figsize=figsize, dpi=300)
-    gplot = gplately.PlotTopologies(model, coastlines=coastlines, continents=continents, time=time)
 
-    if mollweide:
-        ax = fig.add_subplot(111, projection=ccrs.Mollweide(central_longitude = central_longitude))
-        ax.gridlines(color='0.7',linestyle='--', xlocs=np.arange(-180,180,30), ylocs=np.arange(-90,90,30))
-    
-        mollweide_proj = f"+proj=moll +lon_0={central_longitude} +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
-        # gdf=gdf.to_crs(mollweide_proj)
-    else:
-        ax = fig.add_subplot(111, projection=ccrs.PlateCarree(central_longitude = central_longitude))
-        ax.gridlines(color='0.7',linestyle='--', xlocs=np.arange(-180,180,15), ylocs=np.arange(-90,90,15))
-    
-        
-        
-    if features:
-    
-        # Plot shapefile features, subduction zones and MOR boundaries at 50 Ma
-        gplot.time = time # Ma
-        # gplot.plot_continent_ocean_boundaries(ax, color='b', alpha=0.05)
-        gplot.plot_continents(ax, facecolor='palegoldenrod', alpha=0.2)
-        gplot.plot_continents(ax, facecolor='grey', alpha=0.2)
-        gplot.plot_coastlines(ax, color='skyblue',alpha=0.3)
-        # gplot.plot_ridges_and_transforms(ax, color='red')
-        gplot.plot_trenches(ax, color='k')
-        gplot.plot_subduction_teeth(ax, color='k')
-    
-    
-        # Plot the GeoDataFrame
-    
-    if quick:
-        da=df_to_NetCDF(x=gdf["Longitude"],y=gdf["Latitude"],z=gdf[column])
-        plot=gplot.plot_grid(ax=ax, grid=da,**{'cmap':cmap,'vmax':vmax,'vmin': vmin})
-    else:
-        plot = gdf.plot(ax=ax, cmap=cmap, column=column,vmax=vmax,vmin=vmin,color=color,markersize=markersize)
-    
-
-    # ds[column].plot(ax=ax,vmin=vmin,vmax=vmax, cbar_kwargs={'orientation':'horizontal','shrink':0.5,
-    #                                           'label':f'{column}'})
-    if cbar:
-        # Create a ScalarMappable object
-        sm = cm.ScalarMappable(cmap=cmap)
-        sm.set_array(gdf[column])
-        sm.set_clim(vmin, vmax)
-        
-        # Add colorbar using the same Axes object used for plotting
-        colorbar = plt.colorbar(sm, ax=ax, orientation=orientation,shrink=shrink,extend=extend, label=label)
-        colorbar.set_label(label)
-    
-    ax.set_global()
-    
-    return ax    
     
 def create_geodataframe_topologies(topologies, reconstruction_time):
     """ This is a function to convert topologies from pygplates into a GeoDataFrame
@@ -737,7 +745,7 @@ def nan_gaussian_filter(data, sigma,radius=5):
 
 
 
-def plotgdf(gdf,model,column=None,mollweide=False,time=0,cbar=False,quick=True,**kwargs):
+def plotgdf(gdf,gplot,column=None,mollweide=False,time=0,cbar=False,quick=True,**kwargs):
 
     '''This function can be used to plot the reconstructed geodataframe at any time along with topologies and 
     features. If the data is large it will take a lot of time to plot. Turn quick to True to plot the data faster.
@@ -772,7 +780,7 @@ def plotgdf(gdf,model,column=None,mollweide=False,time=0,cbar=False,quick=True,*
     
     
     fig = plt.figure(figsize=figsize, dpi=300)
-    gplot = gplately.PlotTopologies(model, coastlines=coastlines, continents=continents, time=time)
+    # gplot = gplately.PlotTopologies(model, coastlines=model.coastlines, continents=model.continents, time=time)
 
     if mollweide:
         ax = fig.add_subplot(111, projection=ccrs.Mollweide(central_longitude = central_longitude))
@@ -790,11 +798,9 @@ def plotgdf(gdf,model,column=None,mollweide=False,time=0,cbar=False,quick=True,*
     
         # Plot shapefile features, subduction zones and MOR boundaries at time Ma
         gplot.time = time # Ma
-        # gplot.plot_continent_ocean_boundaries(ax, color='b', alpha=0.05)
-        # gplot.plot_continents(ax, facecolor='palegoldenrod', alpha=0.2)
-        # gplot.plot_continents(ax, facecolor='grey', alpha=0.2)
+        gplot.plot_continents(ax, facecolor='grey', alpha=0.2)
         gplot.plot_coastlines(ax, color='skyblue',alpha=0.3)
-        # gplot.plot_ridges_and_transforms(ax, color='red')
+        gplot.plot_ridges_and_transforms(ax, color='red')
         gplot.plot_trenches(ax, color='k')
         gplot.plot_subduction_teeth(ax, color='k')
     
@@ -802,7 +808,7 @@ def plotgdf(gdf,model,column=None,mollweide=False,time=0,cbar=False,quick=True,*
         # Plot the GeoDataFrame
     
     if quick:
-        da=df_to_NetCDF(x=gdf["Longitude"],y=gdf["Latitude"],z=gdf[column])
+        da=df_to_NetCDF(x=gdf["Longitude"],y=gdf["Latitude"],z=gdf[column],grid_resolution=0.2)
         plot=gplot.plot_grid(ax=ax, grid=da,**{'cmap':cmap,'vmax':vmax,'vmin': vmin})
     else:
         plot = gdf.plot(ax=ax, cmap=cmap, column=column,vmax=vmax,vmin=vmin,color=color,markersize=markersize)
@@ -900,6 +906,36 @@ def poly_around_sub_ver2(i, subduction_df,topologies_gdf, n_steps=14,resolution=
        
 
 
+def multipoints_from_shape(gpd_file,resolution=0.1):
+    
+    'Input a single shape file to return discrete lat and lon point '
+
+
+    # determine maximum edges
+    polygon = gpd_file.geometry
+    latmin, lonmin, latmax, lonmax = polygon.bounds
+
+    # create prepared polygon
+    prep_polygon = prep(polygon)
+
+    # construct a rectangular mesh
+    points = []
+    valid_points=[]
+    for lat in np.arange(latmin, latmax, resolution):
+        for lon in np.arange(lonmin, lonmax, resolution):
+            points.append(Point((round(lat,4), round(lon,4))))
+
+    # validate if each point falls inside shape using
+    # the prepared polygon
+    valid_points.extend(filter(prep_polygon.contains, points))
+    lat=[]
+    lon=[]
+    for valid_point in valid_points:
+        lat.append(valid_point.y)
+        lon.append(valid_point.x)
+    Multipoints=pygplates.MultiPointOnSphere(zip(lat,lon))
+    
+    return Multipoints,lat,lon
 
 
 def create_geodataframe_topologies(topologies, reconstruction_time):
@@ -1115,5 +1151,72 @@ def get_overriding_pid(PK,subduction_df,reconstruction_time):
     selected_rows['Overriding Plate ID']=oid
     return selected_rows
 
+def latlonlist2point(lat,lon):
+    point_geometries = [Point(lon[i], lat[i]) for i in range(len(lat))]
+    return gpd.GeoSeries(point_geometries)
+
+def value_at_point(name,target_lat,target_lon):
+    with rasterio.open(f'{name}') as src:
+
+        # value=next(src.sample((target_lon,target_lat)))[0]
+        sampled_values = []
+        for val in src.sample([(target_lon, target_lat)]):
+            sampled_values.append(val[0])
+        
+        # Extract the sampled value
+        value = sampled_values[0]
 
 
+
+    return value
+
+
+def create_profile(start_lat, start_lon, end_lat, end_lon, interval):
+    """
+    Create a latitude and longitude profile with a specified interval between two points.
+    """
+    # distance = calculate_haversine(start_lon, start_lat, end_lon, end_lat)
+    # haversine_distance
+    distance =haversine_distance(start_lat, start_lon, end_lat, end_lon)
+    num_points = int(distance / interval) + 1
+    
+    latitudes = []
+    longitudes = []
+    for i in range(num_points):
+        fraction = i / (num_points - 1)
+        lat = start_lat + fraction * (end_lat - start_lat)
+        lon = start_lon + fraction * (end_lon - start_lon)
+        latitudes.append(lat)
+        longitudes.append(lon)
+    
+    return latitudes, longitudes
+
+
+
+def interpolate_value(depth,values,interp_depth=np.arange(0, -70, -1)):
+
+    depthC=depth.copy()
+    valuesC=values.copy()
+
+
+    if min(depthC)< min(interp_depth):
+        depthC.append(min(interp_depth))
+        valuesC.append(values[-1])
+    if max(depthC)< max(interp_depth):
+        depthC.append(max(interp_depth))
+        valuesC.append(values[0])
+
+    sorted_indices = np.argsort(depthC)
+
+
+    sorted_depth = np.array(depthC)[sorted_indices]
+    sorted_values = np.array(valuesC)[sorted_indices]
+    # Create an interpolation function
+    # interpolated_func = interp1d(sorted_depth, sorted_values, kind='nearest')
+    interpolated_func = interp1d(sorted_depth, sorted_values, kind='slinear')
+    
+    
+    # Interpolate t and vp
+    interp_value = interpolated_func(interp_depth)
+
+    return interp_value,interp_depth

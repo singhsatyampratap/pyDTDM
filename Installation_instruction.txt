@@ -1,2 +1,4 @@
-conda create --name pyDTDM
-conda activate pyDTDM
+1. conda create --name pyDTDM python=3.9      
+2. conda activate pyDTDM
+3. conda install -c conda-forge pygplates
+4. pip install .

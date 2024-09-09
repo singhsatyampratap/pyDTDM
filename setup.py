@@ -15,31 +15,34 @@ setup(
         'License :: OSI Approved :: MIT License',
         'Operating System :: OS Independent',
     ],
-    python_requires='>=3.6',  # Minimum Python version
+    python_requires='>=3.9',  # Minimum Python version
     install_requires=[
-        'pygplates',           # Core libraries
+        'scipy',
+        'joblib',              # Utilities
         'pandas',
         'geopandas',
         'gplately',
+        'PlateTectonicTools',
         'numpy',
         'matplotlib',          # Visualization
         'seaborn',
         'cartopy',
-        'glob2',               # glob is part of the Python standard library; glob2 for backward compatibility
-        'os',                  # os is part of Python’s standard library (no need to install, just a note)
-        'stripy',              # Geospatial libraries
+        'cmcrameri'
+,        'stripy',              # Geospatial libraries
         'shapely',
         'xarray',
         'rasterio',
+        'geopy',
         'scikit-learn',        # Machine Learning
         'tensorflow',
+        'torch',
         'keras',
-        'joblib',              # Utilities
-        'scipy',
-        'warnings',            # warnings is part of Python’s standard library
+        'interpret',
         'pickle5',
         'pyarrow',
-        'parquet'              # pickle is part of the standard library, but you may use `pickle5` for compatibility
+        'parquet',
+        'jupyterlab',
+        'adjustText'             
     ],
     test_suite='tests',  # Where your tests are located
 )

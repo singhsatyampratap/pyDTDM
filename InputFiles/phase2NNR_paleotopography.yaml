@@ -21,12 +21,12 @@ InputFiles:
     # Time Dependent Raster 
     mantle_convection:
         depth: [16,31,47,62,140,155,171, 186,202, 217,233,268,293,323,357,396,439,487,540,597,660,726,798,874,954,1040]
-        original_temp_folder: "/Volumes/Satyam/STLR410MaM1/temp_dimensional"
-        original_vel_folder: "/Volumes/Satyam/STLR410MaM1/vz_dimensional"
-        original_velx_folder: "/Volumes/Satyam/STLR410MaM1/vx_dimensional"
-        original_vely_folder: "/Volumes/Satyam/STLR410MaM1/vy_dimensional"
-        original_visc_folder: "/Volumes/Satyam/STLR410MaM1/visc"
-        new_temp_folder: "/Volumes/Satyam/Paleotopography/STLR410MaM1/temp_dimensional"
+        original_temp_folder: "/Volumes/Satyam/STLR410MaM1/STLR410MaM1/temp_dimensional"
+        original_vel_folder: "/Volumes/Satyam/STLR410MaM1/STLR410MaM1/vz_dimensional"
+        original_velx_folder: "/Volumes/Satyam/STLR410MaM1/STLR410MaM1/vx_dimensional"
+        original_vely_folder: "/Volumes/Satyam/STLR410MaM1/STLR410MaM1/vy_dimensional"
+        original_visc_folder: "/Volumes/Satyam/STLR410MaM1/STLR410MaM1/visc"
+        new_temp_folder: "/Volumes/Satyam/Paleotopography/temp_dimensional"
         new_vel_folder: "/Volumes/Satyam/Paleotopography/STLR410MaM1/vz_dimensional"
         new_velx_folder: "/Volumes/Satyam/Paleotopography/STLR410MaM1/vx_dimensional"
         new_vely_folder: "/Volumes/Satyam/Paleotopography/STLR410MaM1/vy_dimensional"
@@ -57,18 +57,18 @@ InputFiles:
 # --- name of output directories
 OutputFiles:
     # Output Directory
-    output_dir: "EBM"
+    output_dir: "/Volumes/Satyam/BHPDryRun"
 
 
 # --- set parameters
 TimeParameters:
     time_min: 0.
-    time_max: 410
+    time_max: 10
     time_step: 1
 
 
 Parameters:
-    time_window_size: 15. #### size of time window for calculating mean
+    time_window_size: 25. #### size of time window for calculating mean
     weighted_mean: True  #### whether you wanted to use a weighted mean. In Weighted Mean, recent times will have greator weights
     mesh_refinement_level: 9  # The initial positions of crustal points are evenly distributed within the designated region. At mesh refinement level zero, the points are approximately 20 degrees apart. Each increase in the density level results in a halving of the spacing between points. Higher refinement level will take longer time to run.
     mantle_optimised_id: 666666    ### Specify reference frame here
