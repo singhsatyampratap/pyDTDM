@@ -54,6 +54,7 @@ To run the workflow, you'll need specific input rasters and files organized into
 1. **Plate Reconstruction Model:**
    
    This folder contains all the necessary rotation files and topology files needed to run the model. 
+   
 
 2. **Input Rasters:**
    
@@ -63,6 +64,11 @@ To run the workflow, you'll need specific input rasters and files organized into
 
 
 3 **Geodynamics Rasters:** 
+   
+   CitcomS output as time dependent netCDFs.
+   
+   
+Note: More details on how to configure input files in [`ConfigFile_Instruction.md`](/InputFiles/ConfigFile_Instruction.md)
    
 
 
