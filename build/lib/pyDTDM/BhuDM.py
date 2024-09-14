@@ -2,6 +2,7 @@ import pygplates
 import pandas as pd
 import geopandas as gpd
 import gplately
+import ptt
 import numpy as np
 import matplotlib.pyplot as plt
 import glob
@@ -351,7 +352,7 @@ class PlateKinematicsParameters:
         self.continents=continents
         self.anchor_plate_id=anchor_plate_id
         
-        self.rotation_model = pygplates.RotationModel(rotation_filenames)
+        self.rotation_model = pygplates.RotationModel(rotation_filenames,default_anchor_plate_id=anchor_plate_id)
         self.topology_features = pygplates.FeatureCollection()
         for topology_filename in topology_filenames:
                 self.topology_features.add( pygplates.FeatureCollection(topology_filename))
@@ -453,7 +454,7 @@ class PlateKinematicsParameters:
         shared_boundary_sections = []
         subduction_segements=[]
         overriding_plate_ids=[]
-        pygplates.resolve_topologies(self.topology_features, self.rotation_model, resolved_topologies, reconstruction_time, shared_boundary_sections,anchor_plate_id=self.anchor_plate_id)
+        pygplates.resolve_topologies(self.topology_features, self.rotation_model, resolved_topologies, reconstruction_time, shared_boundary_sections) #anchor_plate_id=self.anchor_plate_id
     
         # Iterate over the shared boundary sections of all resolved topologies.
         for shared_boundary_section in shared_boundary_sections:
@@ -518,7 +519,7 @@ class PlateKinematicsParameters:
         
         ### we will now need all the tectonics plates that will be used to filter the subducting and overridding plates
         resolved_topologies = ptt.resolve_topologies.resolve_topologies_into_features(
-                self.rotation_model,self.topology_features, reconstruction_time,anchor_plate_id=self.anchor_plate_id)
+                self.rotation_model,self.topology_features, reconstruction_time)#,anchor_plate_id=self.anchor_plate_id)
         topologies, ridge_transforms, ridges, transforms, trenches, trench_left, trench_right, other = resolved_topologies
         
         topologies_gdf=create_geodataframe_topologies(topologies, reconstruction_time)
@@ -688,28 +689,41 @@ class PlateKinematicsParameters:
         
         
         if self.agegrid!=None:
+            
             # Construct age grid file path
-            age_grid_file = find_filename_with_number(self.agegrid,reconstruction_time)
-            print(f"Using file {age_grid_file} for agegrid")
-            # Interpolate seafloor age at subduction one locations
-            age_raster = gplately.Raster(data=age_grid_file, plate_reconstruction=self.model, time=reconstruction_time)
+            # try:
+            try:
+                age_grid_file = find_filename_with_number(self.agegrid,reconstruction_time)
+                print(f"Using agegrid file : {age_grid_file}")
+                # Interpolate seafloor age at subduction one locations
+                age_raster = gplately.Raster(data=age_grid_file, plate_reconstruction=self.model, time=reconstruction_time)
+            # except:
+            #     try:
+            #         age_grid_file = find_filename_with_number2(self.agegrid,reconstruction_time)
+            #         print(f"Using agegrid file : {age_grid_file}")
+            #         # Interpolate seafloor age at subduction one locations
+            #         age_raster = gplately.Raster(data=age_grid_file, plate_reconstruction=self.model, time=reconstruction_time)
+            except Exception as e:
+                print("No Seafloor age grid found!")
+                        
             age_raster.fill_NaNs(inplace=True)
             age_interp = age_raster.interpolate(subduction_lon, subduction_lat)
-    
+
             # Calculate plate thickness from seafloor age
             plate_thickness = gplately.tools.plate_isotherm_depth(age_interp)
 
             # Calculate subduction volume rate (in km^3/yr)
             subduction_vol_rate = plate_thickness * subduction_length * subduction_convergence  # in m^3/yr
             subduction_vol_rate *= 1e-9  # convert to km^3/yr
-        
+
             # Calculate subduction flux
             subduction_flux = plate_thickness * subduction_convergence
-            
+
             subduction['Subduction Volume Rate']=subduction_vol_rate
             subduction['Plate Thickness']=plate_thickness
             subduction['Subduction Flux']=subduction_flux
-       
+            # except Exception as e:
+            #     print(e)
 
       
     
@@ -1936,6 +1950,846 @@ def cumulative_subduction_params(training_data_folder,starttime,endtime,elevatio
    
     
     return cumulative
+
+
+class SimpleNN(nn.Module):
+    def __init__(self, input_size, nodes, dropout):
+        super(SimpleNN, self).__init__()
+        self.fc1 = nn.Linear(input_size, 16 * nodes)
+        self.bn1 = nn.BatchNorm1d(16 * nodes)
+        self.dropout1 = nn.Dropout(dropout)
+        
+        self.fc2 = nn.Linear(16 * nodes, 8 * nodes)
+        self.bn2 = nn.BatchNorm1d(8 * nodes)
+        self.dropout2 = nn.Dropout(dropout)
+        
+        self.fc3 = nn.Linear(8 * nodes, 1 * nodes)
+        self.bn3 = nn.BatchNorm1d(1 * nodes)
+        self.dropout3 = nn.Dropout(dropout)
+        
+        self.fc4 = nn.Linear(1 * nodes, nodes)
+        self.bn4 = nn.BatchNorm1d(nodes)
+        self.dropout4 = nn.Dropout(dropout)
+        
+        self.fc5 = nn.Linear(nodes, 1)
+
+    def forward(self, x):
+        x = torch.relu(self.fc1(x))
+        x = self.bn1(x)
+        x = self.dropout1(x)
+        
+        x = torch.relu(self.fc2(x))
+        x = self.bn2(x)
+        x = self.dropout2(x)
+        
+        x = torch.relu(self.fc3(x))
+        x = self.bn3(x)
+        x = self.dropout3(x)
+        
+        x = torch.relu(self.fc4(x))
+        x = self.bn4(x)
+        x = self.dropout4(x)
+        
+        x = self.fc5(x)
+        
+        return x
+
+class DLModel_torch:
+    def __init__(self, training_df, training_variables, target_variable, nodes=8, n_epoch=20, dropout=0.2, bn=True, lr="OnPlateau", scaler="RobustScaler"):
+        self.df = training_df.copy()
+        self.columns = training_variables
+        self.target_variable = target_variable
+        self.nodes = max(8, nodes)
+        self.n_epoch = n_epoch
+        self.dropout = dropout
+        self.bn = bn
+        self.lr = lr
+        self.scaler = scaler
+        self.model = None
+        self.scaler1 = None
+        self.scaler2 = None
+   
+ 
+ 
+    def fit(self):
+        # Data preparation
+        features_nan = self.df[self.columns].copy()
+        imputer = KNNImputer(n_neighbors=4, weights="uniform")
+        features = pd.DataFrame(imputer.fit_transform(features_nan), columns=features_nan.columns)
+        
+        if self.scaler == "MinMaxScaler":
+            self.scaler1 = MinMaxScaler()
+            self.scaler2 = MinMaxScaler()
+        elif self.scaler == "RobustScaler":
+            self.scaler1 = RobustScaler()
+            self.scaler2 = RobustScaler()
+        elif self.scaler == "StandardScaler":
+            self.scaler1 = StandardScaler()
+            self.scaler2 = StandardScaler()
+        else:
+            self.scaler1 = QuantileTransformer(output_distribution='uniform')
+            self.scaler2 = QuantileTransformer(output_distribution='uniform')
+        
+        print("Creating RFTimeTopo model based on parameters:")
+        for col in self.columns:
+            print(col)
+        
+        normalized_features = self.scaler1.fit_transform(features)
+        normalized_y = self.scaler2.fit_transform(self.df[self.target_variable].values.reshape(-1, 1))
+    
+        X_train, X_test, y_train, y_test = train_test_split(normalized_features, normalized_y, test_size=0.7, random_state=22)
+        X_val, X_test, y_val, y_test = train_test_split(X_test, y_test, test_size=0.5, random_state=22)
+    
+        train_dataset = TensorDataset(torch.tensor(X_train, dtype=torch.float32), torch.tensor(y_train, dtype=torch.float32))
+        val_dataset = TensorDataset(torch.tensor(X_val, dtype=torch.float32), torch.tensor(y_val, dtype=torch.float32))
+        test_dataset = TensorDataset(torch.tensor(X_test, dtype=torch.float32), torch.tensor(y_test, dtype=torch.float32))
+    
+        train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
+        test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
+    
+        self.model = SimpleNN(len(self.columns), self.nodes, self.dropout)
+        
+        # Compute weights on unnormalized y_train
+        y_train_unscaled = self.scaler2.inverse_transform(y_train)
+        y_train_flat = y_train_unscaled.ravel()
+        weights = np.ones_like(y_train_flat)
+        weights[(y_train_flat > -1000) & (y_train_flat <= 0)] = 1
+        weights[(y_train_flat > 0) & (y_train_flat <= 300)] = 2
+        weights[(y_train_flat > 300) & (y_train_flat <= 3000)] = 4
+        weights[y_train_flat > 3000] = 4
+        weights = torch.tensor(weights, dtype=torch.float32)
+    
+        criterion = nn.MSELoss(reduction='none')
+        optimizer = optim.Adam(self.model.parameters(), lr=0.0001)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2)
+    
+        self.history = {'train_loss': [], 'val_loss': []}
+        
+        for epoch in range(self.n_epoch):
+            train_loss = 0.0
+            val_loss = 0.0
+            
+            self.model.train()
+            for inputs, labels in train_loader:
+                optimizer.zero_grad()
+                outputs = self.model(inputs)
+                loss = criterion(outputs.squeeze(), labels.squeeze())
+                
+                # Compute weights for the current batch based on unnormalized y_train values
+                y_train_flat_batch = labels.squeeze().detach().numpy()
+                y_train_flat_batch_unscaled = self.scaler2.inverse_transform(y_train_flat_batch.reshape(-1, 1)).ravel()
+    
+                # Ensure y_train_flat_batch_unscaled is not empty
+                if y_train_flat_batch_unscaled.size == 0:
+                    continue
+                
+                weights_batch = np.ones_like(y_train_flat_batch_unscaled)
+                weights_batch[(y_train_flat_batch_unscaled > -1000) & (y_train_flat_batch_unscaled <= 0)] = 1
+                weights_batch[(y_train_flat_batch_unscaled > 0) & (y_train_flat_batch_unscaled <= 300)] = 2
+                weights_batch[(y_train_flat_batch_unscaled > 300) & (y_train_flat_batch_unscaled <= 3000)] = 4
+                weights_batch[y_train_flat_batch_unscaled > 3000] = 4
+                weights_batch = torch.tensor(weights_batch, dtype=torch.float32)
+    
+                # Apply weights to loss
+                weighted_loss = (loss * weights_batch).mean()
+                weighted_loss.backward()
+                optimizer.step()
+                train_loss += weighted_loss.item() * inputs.size(0)
+            
+            self.model.eval()
+            with torch.no_grad():
+                for inputs, labels in val_loader:
+                    outputs = self.model(inputs)
+                    loss = criterion(outputs.squeeze(), labels.squeeze())
+                    
+                    # Compute weights for the validation batch based on unnormalized y_val values
+                    y_val_flat_batch = labels.squeeze().detach().numpy()
+                    y_val_flat_batch_unscaled = self.scaler2.inverse_transform(y_val_flat_batch.reshape(-1, 1)).ravel()
+    
+                    # Ensure y_val_flat_batch_unscaled is not empty
+                    if y_val_flat_batch_unscaled.size == 0:
+                        continue
+                    
+                    weights_batch = np.ones_like(y_val_flat_batch_unscaled)
+                    weights_batch[(y_val_flat_batch_unscaled > -1000) & (y_val_flat_batch_unscaled <= 0)] = 1
+                    weights_batch[(y_val_flat_batch_unscaled > 0) & (y_val_flat_batch_unscaled <= 300)] = 2
+                    weights_batch[(y_val_flat_batch_unscaled > 300) & (y_val_flat_batch_unscaled <= 3000)] = 4
+                    weights_batch[y_val_flat_batch_unscaled > 3000] = 4
+                    weights_batch = torch.tensor(weights_batch, dtype=torch.float32)
+    
+                    # Apply weights to loss
+                    weighted_loss = (loss * weights_batch).mean()
+                    val_loss += weighted_loss.item() * inputs.size(0)
+            
+            train_loss /= len(train_loader.dataset)
+            val_loss /= len(val_loader.dataset)
+            
+            self.history['train_loss'].append(train_loss)
+            self.history['val_loss'].append(val_loss)
+            
+            print(f"Epoch {epoch+1}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
+            
+            scheduler.step(val_loss)
+        
+        # Evaluate on test data
+        test_loss = 0.0
+        self.model.eval()
+        with torch.no_grad():
+            for inputs, labels in test_loader:
+                outputs = self.model(inputs)
+                loss = criterion(outputs.squeeze(), labels.squeeze())
+                
+                # Compute weights for the test batch based on unnormalized y_test values
+                y_test_flat_batch = labels.squeeze().detach().numpy()
+                y_test_flat_batch_unscaled = self.scaler2.inverse_transform(y_test_flat_batch.reshape(-1, 1)).ravel()
+    
+                # Ensure y_test_flat_batch_unscaled is not empty
+                if y_test_flat_batch_unscaled.size == 0:
+                    continue
+                
+                weights_batch = np.ones_like(y_test_flat_batch_unscaled)
+                weights_batch[(y_test_flat_batch_unscaled > -1000) & (y_test_flat_batch_unscaled <= 0)] = 1
+                weights_batch[(y_test_flat_batch_unscaled > 0) & (y_test_flat_batch_unscaled <= 300)] = 2
+                weights_batch[(y_test_flat_batch_unscaled > 300) & (y_test_flat_batch_unscaled <= 3000)] = 4
+                weights_batch[y_test_flat_batch_unscaled > 3000] = 4
+                weights_batch = torch.tensor(weights_batch, dtype=torch.float32)
+    
+                # Apply weights to loss
+                weighted_loss = (loss * weights_batch).mean()
+                test_loss += weighted_loss.item() * inputs.size(0)
+        
+        test_loss /= len(test_loader.dataset)
+        print(f"Root Mean Squared Error: {np.sqrt(test_loss)}")
+        
+        # Predict on full data
+        full_dataset = torch.tensor(normalized_features, dtype=torch.float32)
+        self.model.eval()
+        with torch.no_grad():
+            y_pred = self.model(full_dataset).numpy()
+        
+        scaled_back_y_pred = self.scaler2.inverse_transform(y_pred.reshape(-1, 1))
+        self.df[f'Predicted {self.target_variable}'] = scaled_back_y_pred
+        self.df['Difference'] = self.df[self.target_variable] - self.df[f'Predicted {self.target_variable}']
+    
+  
+        
+ 
+
+    
+    def predict(self, df):
+        columns = list(self.columns)
+        features_nan = df[columns]
+        imputer = KNNImputer(n_neighbors=4, weights="uniform")
+        features = pd.DataFrame(imputer.fit_transform(features_nan), columns=features_nan.columns)
+        features = features.reindex(columns=columns)
+        normalized_features = self.scaler1.transform(features)
+        full_dataset = torch.tensor(normalized_features, dtype=torch.float32)
+        
+        self.model.eval()
+        with torch.no_grad():
+            y_pred = self.model(full_dataset).numpy()
+        
+        scaled_back_y_pred = self.scaler2.inverse_transform(y_pred.reshape(-1, 1))
+        return scaled_back_y_pred
+    
+    def plot_loss_curve(self):
+        if self.history is None:
+            print("Model has not been trained yet.")
+            return
+        
+        plt.plot(self.history['train_loss'], label='Training Loss')
+        plt.plot(self.history['val_loss'], label='Validation Loss')
+        plt.title('Loss Curve')
+        plt.xlabel('Epochs')
+        plt.ylabel('Loss')
+        plt.legend()
+        plt.show()
+
+    def save_model(self, loc):
+        try:
+            if not os.path.exists(loc):
+                os.makedirs(loc)
+            
+            self.df.to_csv(f'{loc}/df_data.csv', index=False)
+            torch.save(self.model.state_dict(), f'{loc}/deep_time_topo_model.pth')
+            
+            with open(f'{loc}/scaler1.pkl', 'wb') as f:
+                pickle.dump(self.scaler1, f)
+            with open(f'{loc}/scaler2.pkl', 'wb') as f:
+                pickle.dump(self.scaler2, f)
+            
+            with open(f'{loc}/columns.txt', 'w') as f:
+                f.write('\n'.join(self.columns))
+            
+            with open(f'{loc}/training_history.pkl', 'wb') as f:
+                pickle.dump(self.history, f)
+            
+            print(f"Saved model components to {loc}")
+        except Exception as e:
+            print(f"Error saving files: {str(e)}")
+    
+    def load_model(self, loc):
+        try:
+            self.df = pd.read_csv(f'{loc}/df_data.csv')
+            self.model = SimpleNN(len(self.columns), self.nodes, self.dropout)
+            self.model.load_state_dict(torch.load(f'{loc}/deep_time_topo_model.pth'))
+            
+            with open(f'{loc}/scaler1.pkl', 'rb') as f:
+                self.scaler1 = pickle.load(f)
+            with open(f'{loc}/scaler2.pkl', 'rb') as f:
+                self.scaler2 = pickle.load(f)
+            
+            with open(f'{loc}/columns.txt', 'r') as f:
+                self.columns = f.read().splitlines()
+            
+            with open(f'{loc}/training_history.pkl', 'rb') as f:
+                self.history = pickle.load(f)
+            
+            print(f"Loaded model components from {loc}")
+        except FileNotFoundError as fnf_error:
+            print(f"File not found error: {str(fnf_error)}")
+        except Exception as e:
+            print(f"Error loading files: {str(e)}")
+    
+    def __repr__(self):
+        return f"DeepTimeTopoModel(nodes={self.nodes}, n_epoch={self.n_epoch}, dropout={self.dropout}, bn={self.bn}, lr={self.lr}, scaler={self.scaler})"
+
+
+from sklearn.impute import KNNImputer
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler, RobustScaler, StandardScaler, QuantileTransformer
+from tensorflow.keras import layers
+from tensorflow.keras import models, callbacks, optimizers
+
+from sklearn.impute import KNNImputer
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler, RobustScaler, StandardScaler, QuantileTransformer
+from tensorflow.keras import layers, models, callbacks, optimizers
+
+class DLModel_tensorflow:
+    def __init__(self, training_df, training_variables, target_variable, nodes=8, n_epoch=20, dropout=0.2, bn=True, lr="OnPlateau", scaler="RobustScaler"):
+        self.df = training_df.copy()
+        self.columns = training_variables
+        self.target_variable = target_variable
+        self.nodes = max(8, nodes)
+        self.n_epoch = n_epoch
+        self.dropout = dropout
+        self.bn = bn
+        self.lr = lr
+        self.scaler = scaler
+        self.model = None
+        self.scaler1 = None
+        self.scaler2 = None
+        self.history = None
+    
+    def fit(self):
+        features_nan = self.df[self.columns].copy()
+        imputer = KNNImputer(n_neighbors=4, weights="uniform")
+        features = pd.DataFrame(imputer.fit_transform(features_nan), columns=features_nan.columns)
+        
+        if self.scaler == "MinMaxScaler":
+            self.scaler1 = MinMaxScaler()
+            self.scaler2 = MinMaxScaler()
+        elif self.scaler == "RobustScaler":
+            self.scaler1 = RobustScaler()
+            self.scaler2 = RobustScaler()
+        elif self.scaler == "StandardScaler":
+            self.scaler1 = StandardScaler()
+            self.scaler2 = StandardScaler()
+        else:
+            self.scaler1 = QuantileTransformer(output_distribution='uniform')
+            self.scaler2 = QuantileTransformer(output_distribution='uniform')
+        print("Creating RFTimeTopo model based on parameters:")
+        for col in self.columns:
+            print(col)
+        normalized_features = self.scaler1.fit_transform(features)
+        normalized_y = self.scaler2.fit_transform(self.df[self.target_variable].values.reshape(-1, 1))
+
+        X_train, X_test, y_train, y_test = train_test_split(normalized_features, normalized_y, test_size=0.7, random_state=22)
+        X_val, X_test, y_val, y_test = train_test_split(X_test, y_test, test_size=0.5, random_state=22)
+
+        dropout=self.dropout
+        activation="relu"
+        model = Sequential()
+        model.add(Input(shape=(len(self.columns),)))  # Updated input layer
+        model.add(Dense(16 * self.nodes))
+        model.add(BatchNormalization())
+        model.add(Dropout(dropout))
+        model.add(Activation(activation)) 
+        model.add(Dense(8 * self.nodes))
+        model.add(BatchNormalization())
+        model.add(Dropout(dropout))
+        model.add(Activation(activation)) 
+        model.add(Dense(4 * self.nodes))
+        model.add(BatchNormalization())
+        model.add(Dropout(dropout))
+        model.add(Activation(activation)) 
+        model.add(Dense(self.nodes))
+        model.add(BatchNormalization())
+        model.add(Dropout(dropout))
+        model.add(Activation(activation))
+        model.add(Dense(1))
+        
+        print(model.summary())
+        if self.lr == "Step":
+            reduce_lr = callbacks.LearningRateScheduler(self.step_decay, verbose=1)
+        elif self.lr == "OnPlateau":
+            reduce_lr = callbacks.ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, min_lr=1e-7, verbose=1)
+        else:
+            reduce_lr = None
+        
+        early_stopping = callbacks.EarlyStopping(monitor='val_loss', patience=20, verbose=1, restore_best_weights=True)
+        
+        model.compile(loss='mean_squared_error', optimizer=optimizers.Adam())
+        
+        # history = model.fit(X_train, y_train, epochs=self.n_epoch, batch_size=32, validation_data=(X_val, y_val),
+        #                     callbacks=[reduce_lr, early_stopping], verbose=1)
+        history = model.fit(X_train, y_train, epochs=self.n_epoch, batch_size=32, validation_data=(X_val, y_val), verbose=1)
+        
+        mse = model.evaluate(X_test, y_test)
+        print(f"Root Mean Squared Error: {np.sqrt(mse)}")
+        
+        y_pred = model.predict(normalized_features)
+        scaled_back_y_pred = self.scaler2.inverse_transform(y_pred.reshape(-1, 1))
+        self.df[f'Predicted {self.target_variable}'] = scaled_back_y_pred 
+        self.df['Difference'] = self.df[self.target_variable] - self.df[f'Predicted {self.target_variable}']
+        
+        self.model = model
+        self.history = history
+        self.scaler1 = self.scaler1
+        self.scaler2 = self.scaler2
+        self.df = self.df
+    
+    def step_decay(self, epoch):
+        initial_lr = 0.01
+        drop = 0.5
+        epochs_drop = 10
+        new_lr = initial_lr * (drop ** (epoch // epochs_drop))
+        return new_lr
+    def predict(self, df):
+        """
+        Predict the target using the trained deep learning model.
+        """
+        columns = list(self.columns)
+      
+        features_nan = df[columns]
+        imputer = KNNImputer(n_neighbors=4, weights="uniform")
+        features = pd.DataFrame(imputer.fit_transform(features_nan), columns=features_nan.columns)
+
+        features = features.reindex(columns=columns)
+
+        normalized_features = self.scaler1.transform(features)
+        y_pred = self.model.predict(normalized_features)
+        scaled_back_y_pred = self.scaler2.inverse_transform(y_pred.reshape(-1, 1))
+        
+
+        return scaled_back_y_pred
+    
+    def get_error(self):
+            """
+            Calculate the Root Mean Squared Error (RMSE) of the predicted elevation values.
+        
+            Parameters:
+            - df (pd.DataFrame): The DataFrame containing the actual and predicted elevation values.
+        
+            Returns:
+            - error (float): The RMSE value.
+            """
+            if f'Predicted {self.target_variable}' in self.df.columns:
+                return np.sqrt(np.mean((self.df[self.target_variable] - self.df[f'Predicted {self.target_variable}']) ** 2))
+            else:
+                self.Fit()
+                return np.sqrt(np.mean((self.df[self.target_variable] - self.df[f'Predicted {self.target_variable}']) ** 2))
+            
+    
+
+    def plot_loss_curve(self):
+        """
+        Plot the loss curve during training.
+        """
+        if self.history is None:
+            print("Model has not been trained yet.")
+            return
+
+        plt.plot(self.history.history['loss'], label='Training Loss')
+        plt.plot(self.history.history['val_loss'], label='Validation Loss')
+        plt.title('Loss Curve')
+        plt.xlabel('Epochs')
+        plt.ylabel('Loss')
+        plt.legend()
+        plt.show()
+
+    def plot_prediction(self):
+        """
+        Plot the actual and predicted elevations along with RMSE.
+        """
+        gdf = gpd.GeoDataFrame(self.df, geometry=[Point(x, y) for x, y in zip(self.df['Longitude'].values, self.df['Latitude'].values)])
+        gdf = gdf.set_crs(epsg=4326)
+        kwargs = {'vmin': -11000, 'vmax': 6000, 'cmap': 'viridis'}
+        plotgdf(gdf, mollweide=True, column='Elevation', cbar=True, **kwargs)
+        plotgdf(gdf, mollweide=True, column='Predicted Elevation', cbar=True, **kwargs)
+        kwargs = {'cmap': 'cool', 'label': 'RMSE(m)', 'vmin': 0, 'vmax': 1000}
+        plotgdf(gdf, mollweide=True, column='RMSE', cbar=True, **kwargs)
+
+    def save_model(self, loc):
+        """
+        Save DataFrame, trained model, scalers, columns, and training history to specified location.
+        """
+        try:
+            if not os.path.exists(loc):
+                os.makedirs(loc)
+
+            self.df.to_csv(f'{loc}/df_data.csv', index=False)
+            self.model.save(f'{loc}/deep_time_topo_model.h5')
+
+            with open(f'{loc}/scaler1.pkl', 'wb') as f:
+                pickle.dump(self.scaler1, f)
+            with open(f'{loc}/scaler2.pkl', 'wb') as f:
+                pickle.dump(self.scaler2, f)
+
+            with open(f'{loc}/columns.txt', 'w') as f:
+                f.write('\n'.join(self.columns))
+
+            with open(f'{loc}/training_history.pkl', 'wb') as f:
+                pickle.dump(self.history.history, f)
+
+            print(f"Saved model components to {loc}")
+        except Exception as e:
+            print(f"Error saving files: {str(e)}")
+
+    def load_model(self, loc):
+        """
+        Load DataFrame, trained model, scalers, columns, and training history from specified location.
+        """
+        try:
+            self.df = pd.read_csv(f'{loc}/df_data.csv')
+            self.model = load_model(f'{loc}/deep_time_topo_model.h5')
+
+            with open(f'{loc}/scaler1.pkl', 'rb') as f:
+                self.scaler1 = pickle.load(f)
+            with open(f'{loc}/scaler2.pkl', 'rb') as f:
+                self.scaler2 = pickle.load(f)
+
+            with open(f'{loc}/columns.txt', 'r') as f:
+                self.columns = f.read().splitlines()
+
+            with open(f'{loc}/training_history.pkl', 'rb') as f:
+                history_dict = pickle.load(f)
+                self.history = type('', (), {})()
+                self.history.history = history_dict
+
+            print(f"Loaded model components from {loc}")
+        except FileNotFoundError as fnf_error:
+            print(f"File not found error: {str(fnf_error)}")
+        except Exception as e:
+            print(f"Error loading files: {str(e)}")
+
+    def __repr__(self):
+        return f"DeepTimeTopoModel(nodes={self.nodes}, n_epoch={self.n_epoch}, dropout={self.dropout}, bn={self.bn}, lr={self.lr}, scaler={self.scaler})"
+
+
+class RFModel:
+    def __init__(self, training_df, training_variables, target_variable, n_estimators=100, max_depth=8,min_samples_split=10,min_samples_leaf=5,max_features='sqrt',parallel=-1,random_state=22):
+        """
+        Initialize the RFTopoModel with the given parameters.
+        
+        Parameters:
+        - training_df (pd.DataFrame): The input DataFrame containing the data.
+        - remove_variable (str): The variable/column to be removed from the features.
+        - n_estimators (int): The number of trees in the forest.
+        - max_depth (int): The maximum depth of the tree.
+        """
+        self.df = training_df.copy().drop_duplicates()
+        self.n_estimators = n_estimators
+        self.max_depth = max_depth
+        self.min_samples_split=min_samples_split
+        self.min_samples_leaf=min_samples_leaf
+        self.max_features=max_features
+        self.random_state=random_state
+        self.columns = training_variables
+        self.target_variable=target_variable
+        self.model = None
+        self.n_jobs=parallel
+        
+    def __repr__(self):
+        """
+        Return a string representation of the RFTopoModel instance.
+        """
+        return (f"RFTopoModel(n_estimators={self.n_estimators}, "
+                f"Features={self.columns}, "
+                f"Target Variable={self.target_variable}")
+
+    def __str__(self):
+        """
+        Return a readable string representation of the RFTopoModel instance.
+        """
+        return (f"RFTopoModel with {self.n_estimators} trees, "
+                f"max depth of {self.max_depth}, "
+                f"trained to predict elevation")
+
+    def __len__(self):
+        """
+        Return the number of rows in the DataFrame.
+        """
+        return len(self.df)
+
+    def __getitem__(self, index):
+        """
+        Get an item (row) from the DataFrame by index.
+        """
+        return self.df.iloc[index]
+
+    def __setitem__(self, index, value):
+        """
+        Set an item (row) in the DataFrame by index.
+        """
+        self.df.iloc[index] = value
+
+    def __delitem__(self, index):
+        """
+        Delete an item (row) from the DataFrame by index.
+        """
+        self.df = self.df.drop(index).reset_index(drop=True)
+
+    def fit(self):
+        """
+        Create and train a Random Forest model using the provided data.
+        
+        Returns:
+        - df (pd.DataFrame): The DataFrame with the predicted elevation and RMSE columns.
+        - model (RandomForestRegressor): The trained RandomForest model.
+        - columns (list): List of feature columns used in the model.
+        """
+        features_nan = self.df[self.columns].copy()
+        imputer = KNNImputer(n_neighbors=4, weights="uniform")
+        # imputer = SimpleImputer(strategy='mean')
+        features = pd.DataFrame(imputer.fit_transform(features_nan), columns=features_nan.columns)
+
+        print("Creating RFTimeTopo model based on parameters:")
+        for col in self.columns:
+            print(col)
+
+        y = self.df[self.target_variable].values.reshape(-1, 1)
+        X_train, X_test, y_train, y_test = train_test_split(features, y, test_size=0.3, random_state=22)
+        X_val, X_tes, y_val, y_tes = train_test_split(X_test, y_test, test_size=0.5, random_state=22)
+
+        self.model = RandomForestRegressor(
+            n_estimators=self.n_estimators,
+            max_depth=self.max_depth,
+            min_samples_split=self.min_samples_split,
+            min_samples_leaf=self.min_samples_leaf,
+            max_features=self.max_features,
+            random_state=self.random_state,
+            n_jobs=self.n_jobs
+        )
+        # weights = y_train / np.max(y_train)
+        # Initialize the weight array with default weight 1
+      # Flatten y_train to ensure it's a 1-dimensional array
+        y_train_flat = y_train.ravel()
+        
+        # Initialize the weight array with default weight 1
+        weights = np.ones_like(y_train_flat)
+        
+        # Apply the conditions to update the weights
+        weights[(y_train_flat > 300) & (y_train_flat <= 1000)] = 2
+        weights[(y_train_flat > 1000) & (y_train_flat <= 3000)] = 3
+        weights[y_train_flat > 3000] = 4
+
+        self.model.fit(X_train, y_train.ravel(),sample_weight=weights)
+
+        y_pred = self.model.predict(X_tes)
+        mse = mean_squared_error(y_tes, y_pred)
+        print(f"Mean Square Error {np.sqrt(mse)}")
+
+        y_pred_full = self.model.predict(features)
+        self.df[f'Predicted {self.target_variable}'] = y_pred_full
+        self.df['Difference'] = self.df[self.target_variable] - self.df[f'Predicted {self.target_variable}']
+
+        # return self.df, self.model, self.columns
+
+    def predict(self, df):
+        """
+        Predict elevation using the trained RandomForest model.
+        
+        Parameters:
+        - df (pd.DataFrame): The input DataFrame containing the features for prediction.
+        
+        Returns:
+        - y_pred (np.array): The predicted elevation values.
+        """
+     
+
+        features_nan = df[self.columns]
+        imputer = KNNImputer(n_neighbors=4, weights="uniform")
+        features = pd.DataFrame(imputer.fit_transform(features_nan), columns=features_nan.columns)
+        features = features.reindex(columns=self.columns)
+        
+        y_pred = self.model.predict(features)
+        return y_pred
+
+    def plot_difference(self, plate_model,kwargs1,kwargs2,quick=True):
+        """
+        Plot the actual and predicted elevation values on a map.
+        
+        
+        """
+        df=self.df
+        gdf = gpd.GeoDataFrame(df, geometry=[Point(x, y) for x, y in zip(df['Longitude'].values, df['Latitude'].values)])
+        gdf = gdf.set_crs(epsg=4326)
+        kwargs = kwargs1
+        plotgdf(gdf,plate_model, mollweide=True, column=self.target_variable, cbar=True,quick=quick, **kwargs)
+        plotgdf(gdf,plate_model, mollweide=True, column=f'Predicted {self.target_variable}', cbar=True, **kwargs)
+        kwargs = kwargs2
+        plotgdf(gdf,plate_model, mollweide=True, column='Difference', cbar=True,quick=quick, **kwargs)
+    
+    
+    def plot_feature_importance(self):
+           """
+           Plot the feature importance of the trained Random Forest model.
+           """
+           if self.model is None:
+               print("Model has not been trained yet.")
+               return
+        
+           importances = self.model.feature_importances_
+           indices = np.argsort(importances)[::-1]
+
+           plt.figure(figsize=(12, 6))
+           plt.title("Feature Importances")
+           plt.bar(range(len(importances)), importances[indices], align="center")
+           plt.xticks(range(len(importances)), [self.columns[i] for i in indices], rotation=90)
+           plt.xlabel("Feature")
+           plt.ylabel("Importance")
+           plt.tight_layout()
+           plt.show()
+    
+    def get_error(self):
+        """
+        Calculate the Root Mean Squared Error (RMSE) of the predicted elevation values.
+        
+        Parameters:
+        - df (pd.DataFrame): The DataFrame containing the actual and predicted elevation values.
+        
+        Returns:
+        - error (float): The RMSE value.
+        """
+        if f'Predicted {self.target_variable}' in self.df.columns:
+            return np.mean(np.sqrt((self.df[self.target_variable] - self.df[f'Predicted {self.target_variable}']) ** 2))
+        else:
+            self.Fit()
+            return np.mean(np.sqrt((self.df[self.target_variable] - self.df[f'Predicted {self.target_variable}']) ** 2))
+            
+
+    def save_model(self, loc):
+        """
+        Save the DataFrame, trained RandomForest model, and columns to the specified location.
+        
+        Parameters:
+        - loc (str): Directory location to save the files.
+        """
+        try:
+
+        
+            # Save df to CSV
+            self.df.to_csv(f'{loc}/df_data.csv', index=False)
+
+            # Save model using pickle
+            with open(f'{loc}/random_forest_model.pkl', 'wb') as f:
+                pickle.dump(self.model, f)
+
+            # Save columns to text file
+            with open(f'{loc}/columns.txt', 'w') as f:
+                f.write('\n'.join(self.columns))
+
+            with open(f'{loc}/random_forest_class.pkl', 'wb') as f:
+                pickle.dump(self, f)
+                
+            print(f"Saved DataFrame, model, and columns to {loc}")
+            
+        except Exception as e:
+            print(f"Error saving files: {str(e)}")
+
+    @staticmethod
+    def load_model(loc):
+        """
+        Load the DataFrame, trained RandomForest model, and columns from the specified location.
+        
+        Parameters:
+        - loc (str): Directory location where files are saved.
+        
+        Returns:
+        - df (pd.DataFrame): The loaded DataFrame.
+        - model (RandomForestRegressor): The loaded RandomForest model.
+        - columns (list): List of column names used in the model.
+        """
+        df = None
+        model = None
+        columns = None
+
+        try:
+            # Read DataFrame from CSV
+            df = pd.read_csv(f'{loc}/df_data.csv')
+
+            # Read trained model from pickle
+            # with open(f'{loc}/random_forest_class.pkl', 'rb') as f:
+#                 RFMain = pickle.load(f)
+
+
+            with open(f'{loc}/random_forest_model.pkl', 'rb') as f:
+                model = pickle.load(f)
+
+            # Read columns from text file
+            with open(f'{loc}/columns.txt', 'r') as f:
+                columns = f.read().splitlines()
+
+            print(f"Loaded DataFrame, model, and columns from {loc}")
+        except FileNotFoundError as fnf_error:
+            print(f"File not found error: {str(fnf_error)}")
+        except Exception as e:
+            print(f"Error loading files: {str(e)}")
+
+        return df, model,columns
+        
+import numpy as np
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.datasets import make_regression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error
+from scipy.special import expit
+import pandas as pd
+from collections import Counter
+
+# Generate a regression dataset (replace this with your actual data)
+X, y = make_regression(n_samples=100, n_features=4, noise=0.2)
+
+# Simulate some negative values for demonstration purposes
+y = y - 50
+
+# Split the data into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Different weighting strategies
+def calculate_weights(strategy, y_train):
+    if strategy == 'exponential':
+        return np.exp(np.abs(y_train) / np.max(np.abs(y_train)))
+    elif strategy == 'logarithmic':
+        return np.log1p(np.abs(y_train) / np.max(np.abs(y_train)))
+    elif strategy == 'quantiles':
+        quantiles = pd.qcut(y_train, q=4, labels=False)
+        return quantiles + 1
+    elif strategy == 'sigmoid':
+        return expit(np.abs(y_train) / np.max(np.abs(y_train)))
+    elif strategy == 'inverse_frequency':
+        freq = Counter(y_train)
+        weights = np.array([1.0 / freq[val] for val in y_train])
+        return weights / np.max(weights)  # Normalize weights
+    elif strategy == 'distance_from_mean':
+        mean_y = np.mean(y_train)
+        return np.abs(y_train - mean_y) / np.max(np.abs(y_train - mean_y))
+    else:
+        return np.ones_like(y_train)
+
 
 
 

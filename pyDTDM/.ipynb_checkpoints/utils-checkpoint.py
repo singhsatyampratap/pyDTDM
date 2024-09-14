@@ -116,70 +116,20 @@ def get_subduction_teeth(row, size=1):
     return Polygon(vertices)
     
     
-# def find_filename_with_number(folder, target_number):
-#     files=glob.glob(f"{folder}/*")
-#     pattern = r'\b(\d{1,3})\b'  # Regex pattern to match numbers between 0 and 1000
-#
-#     for file_name in files:
-#         match = re.search(pattern, file_name)
-#         if match:
-#             number = int(match.group(1))
-#             if number == target_number:
-#                 return file_name
 
-    # return None  # Return None if no matching filename found
     
 def find_filename_with_number(folder, target_number):
     files = glob.glob(f"{folder}/*")
-    # Regex pattern to match the target number, including numbers with a decimal point
-    pattern = re.compile(r'(\d+(\.\d+)?)')
-    
+    pattern=re.compile(r"(\d+)")
     for file_name in files:
-        # Find all numbers in the filename
-        matches = pattern.findall(file_name)
-        for match in matches:
-            number = float(match[0])  # Convert the matched number to float
-            if number == target_number:
-                return file_name
+        matches=pattern.findall(file_name)
+        number = int(matches[-1])  # Convert the matched number to float
+        # print(int(number))
+        if number == target_number:
+            return file_name
+    
     return None
 
-
-def find_filename_with_number(folder, target_number):
-    files = glob.glob(f"{folder}/*")
-    pattern = rf'\b{target_number}\b'  # Regex pattern to match the exact target number as a whole word
-
-    for file_path in files:
-        file_name = os.path.basename(file_path)
-        if re.search(pattern, file_name):
-            return file_path
-    
-    return None  # Return None if no matching filename found
-
-def find_filename_with_number1(folder, target_number):
-    files = glob.glob(f"{folder}/*")
-    # Regex pattern to match the target number, including numbers with a decimal point
-    pattern = re.compile(r'(\d+(\.\d+)?)')
-    
-    for file_name in files:
-        # Find all numbers in the filename
-        matches = pattern.findall(file_name)
-        for match in matches:
-            number = float(match[0])  # Convert the matched number to float
-            if number == target_number:
-                return file_name
-    return None
-
-
-def find_filename_with_number2(folder, target_number):
-    files = glob.glob(f"{folder}/*")
-    pattern = rf'\b{target_number}\b'  # Regex pattern to match the exact target number as a whole word
-
-    for file_path in files:
-        file_name = os.path.basename(file_path)
-        if re.search(pattern, file_name):
-            return file_path
-    
-    return None  # Return None if no matching filename found
 
 
 def find_mantle_file(filenames, time, depth):
@@ -787,7 +737,7 @@ def plotgdf(gdf,gplot,column=None,mollweide=False,time=0,cbar=False,quick=True,*
         ax.gridlines(color='0.7',linestyle='--', xlocs=np.arange(-180,180,30), ylocs=np.arange(-90,90,30))
     
         mollweide_proj = f"+proj=moll +lon_0={central_longitude} +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
-        # gdf=gdf.to_crs(mollweide_proj)
+        gdf=gdf.to_crs(mollweide_proj)
     else:
         ax = fig.add_subplot(111, projection=ccrs.PlateCarree(central_longitude = central_longitude))
         ax.gridlines(color='0.7',linestyle='--', xlocs=np.arange(-180,180,15), ylocs=np.arange(-90,90,15))

@@ -44,5 +44,9 @@ setup(
         'jupyterlab',
         'adjustText'             
     ],
+    include_package_data=True,  # This ensures non-Python files are included
+    package_data={
+        'pyDTDM': ['cpt/*.cpt'],  # Include all .cpt files in the cpt folder
+    },
     test_suite='tests',  # Where your tests are located
 )
