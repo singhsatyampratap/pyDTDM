@@ -123,7 +123,7 @@ def find_filename_with_number(folder, target_number):
     pattern=re.compile(r"(\d+)")
     for file_name in files:
         matches=pattern.findall(file_name)
-        number = int(matches[-1])  # Convert the matched number to float
+        number = int(matches[-1])  # Convert the matched number to an integer
         # print(int(number))
         if number == target_number:
             return file_name
