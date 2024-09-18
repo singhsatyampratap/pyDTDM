@@ -449,9 +449,9 @@ def interpolate_and_save_as_geotiff(folder, param_type, start_time, end_time, de
            
 
         except Exception as e:
-            print("No raster file for interpolating {d} from {start_time} Ma to {end_time} Ma")
+            print(f"No raster file for interpolating {d} from {start_time} Ma to {end_time} Ma")
             continue
-    print(f"Interpolation completed from {start_time} Ma to {end_time} Ma completed.")
+    print(f"Interpolation from {start_time} Ma to {end_time} Ma completed.")
             
         
        
