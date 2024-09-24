@@ -123,7 +123,7 @@ def find_filename_with_number(folder, target_number):
     pattern=re.compile(r"(\d+)")
     for file_name in files:
         matches=pattern.findall(file_name)
-        number = int(matches[-1])  # Convert the matched number to float
+        number = int(matches[-1])  # Convert the matched number to an integer
         # print(int(number))
         if number == target_number:
             return file_name
@@ -449,7 +449,7 @@ def interpolate_and_save_as_geotiff(folder, param_type, start_time, end_time, de
            
 
         except Exception as e:
-            print("No raster file for interpolating {d} from {start_time} Ma to {end_time} Ma")
+            print(f"No raster file for interpolating {d} from {start_time} Ma to {end_time} Ma")
             continue
     print(f"Interpolation completed from {start_time} Ma to {end_time} Ma completed.")
             
