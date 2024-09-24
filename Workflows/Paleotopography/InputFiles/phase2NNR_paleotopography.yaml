@@ -57,13 +57,13 @@ InputFiles:
 # --- name of output directories
 OutputFiles:
     # Output Directory
-    output_dir: "/Volumes/Satyam/BHPDryRun"
+    output_dir: "/Volumes/Satyam/PaleotopographyFinal"
 
 
 # --- set parameters
 TimeParameters:
     time_min: 0.
-    time_max: 10
+    time_max: 380
     time_step: 1
 
 

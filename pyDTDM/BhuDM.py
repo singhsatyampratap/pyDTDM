@@ -697,34 +697,29 @@ class PlateKinematicsParameters:
                 print(f"Using agegrid file : {age_grid_file}")
                 # Interpolate seafloor age at subduction one locations
                 age_raster = gplately.Raster(data=age_grid_file, plate_reconstruction=self.model, time=reconstruction_time)
-            # except:
-            #     try:
-            #         age_grid_file = find_filename_with_number2(self.agegrid,reconstruction_time)
-            #         print(f"Using agegrid file : {age_grid_file}")
-            #         # Interpolate seafloor age at subduction one locations
-            #         age_raster = gplately.Raster(data=age_grid_file, plate_reconstruction=self.model, time=reconstruction_time)
+  
+            
+                age_raster.fill_NaNs(inplace=True)
+                age_interp = age_raster.interpolate(subduction_lon, subduction_lat)
+
+                # Calculate plate thickness from seafloor age
+                plate_thickness = gplately.tools.plate_isotherm_depth(age_interp)
+
+                # Calculate subduction volume rate (in km^3/yr)
+                subduction_vol_rate = plate_thickness * subduction_length * subduction_convergence  # in m^3/yr
+                subduction_vol_rate *= 1e-9  # convert to km^3/yr
+
+                # Calculate subduction flux
+                subduction_flux = plate_thickness * subduction_convergence
+
+                subduction['Subduction Volume Rate']=subduction_vol_rate
+                subduction['Plate Thickness']=plate_thickness
+                subduction['Subduction Flux']=subduction_flux
+            
+            
             except Exception as e:
                 print("No Seafloor age grid found!")
                         
-            age_raster.fill_NaNs(inplace=True)
-            age_interp = age_raster.interpolate(subduction_lon, subduction_lat)
-
-            # Calculate plate thickness from seafloor age
-            plate_thickness = gplately.tools.plate_isotherm_depth(age_interp)
-
-            # Calculate subduction volume rate (in km^3/yr)
-            subduction_vol_rate = plate_thickness * subduction_length * subduction_convergence  # in m^3/yr
-            subduction_vol_rate *= 1e-9  # convert to km^3/yr
-
-            # Calculate subduction flux
-            subduction_flux = plate_thickness * subduction_convergence
-
-            subduction['Subduction Volume Rate']=subduction_vol_rate
-            subduction['Plate Thickness']=plate_thickness
-            subduction['Subduction Flux']=subduction_flux
-            # except Exception as e:
-            #     print(e)
-
       
     
         return subduction
