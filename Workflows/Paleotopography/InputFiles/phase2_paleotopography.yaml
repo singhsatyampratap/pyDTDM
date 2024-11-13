@@ -62,7 +62,7 @@ OutputFiles:
 # --- set parameters
 TimeParameters:
     time_min: 10.
-    time_max: 200
+    time_max: 410
     time_step: 1
 
 
