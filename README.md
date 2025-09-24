@@ -81,4 +81,8 @@ To start Jupyter-Lab:
 jupyter-lab
 ```
 
+### Reference
+
+Singh, S.P., Seton, M., Zahirovic, S., Wright, N.M., Atwood, N., & Fay, C. (2025). Topographic Diversity in Subduction-Related Mountains Driven by Plate Tectonics and Mantle Dynamics. Earth and Planetary Science Letters – under review (Manuscript ID: EPSL-D-25-00272). Preprint: [https://doi.org/10.22541/essoar.174646990.01802371/v1](https://doi.org/10.22541/essoar.174646990.01802371/v1)
+
 
