@@ -1,52 +1,57 @@
 from setuptools import setup, find_packages
+from pathlib import Path
+
+this_directory = Path(__file__).parent
+long_description = (this_directory / "README.md").read_text(encoding="utf-8")
 
 setup(
-    name='pyDTDM', 
-    version='0.1.0',          
-    author='Satyam Pratap Singh',
-    author_email='singhsatyampratap@gmail.com',
-    description='A library ',
-    long_description=open('README.md').read(),  # Load your README file
-    long_description_content_type='text/markdown',  # Content type for the README (e.g., markdown)
-    url='https://github.com/singhsatyampratap/pyDTDM',  # GitHub repo link
-    packages=find_packages(),  # Automatically find all packages
+    name="pyDTDM",
+    version="0.1.0",
+    author="Satyam Pratap Singh",
+    author_email="singhsatyampratap@gmail.com",
+    description="A library for Deep Time Digital Earth and Explainable Boosting Models",
+    long_description=long_description,
+    long_description_content_type="text/markdown",
+    url="https://github.com/singhsatyampratap/pyDTDM",
+    packages=find_packages(),
     classifiers=[
-        'Programming Language :: Python :: 3',
-        'License :: OSI Approved :: MIT License',
-        'Operating System :: OS Independent',
+        "Programming Language :: Python :: 3",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: OS Independent",
     ],
-    python_requires='>=3.9',  # Minimum Python version
+    python_requires=">=3.11",
     install_requires=[
-        'scipy',
-        'joblib',              # Utilities
-        'pandas',
-        'geopandas',
-        'gplately',
-        'PlateTectonicTools',
-        'numpy',
-        'matplotlib',          # Visualization
-        'seaborn',
-        'cartopy',
-        'cmcrameri'
-,        'stripy',              # Geospatial libraries
-        'shapely',
-        'xarray',
-        'rasterio',
-        'geopy',
-        'scikit-learn',        # Machine Learning
-        'tensorflow',
-        'torch',
-        'keras',
-        'interpret',
-        'pickle5',
-        'pyarrow',
-        'parquet',
-        'jupyterlab',
-        'adjustText'             
+        "scipy",
+        "joblib",
+        "pandas",
+        "geopandas",
+        "gplately",
+        "PlateTectonicTools",
+        "numpy",
+        "matplotlib",
+        "seaborn",
+        "cartopy",
+        "cmcrameri",
+        # "stripy",
+        "shapely",
+        "xarray",
+        "rasterio",
+        "geopy",
+        "scikit-learn",
+        # "tensorflow",
+        # "torch",
+        # "keras",
+        "interpret",
+        # "pickle5",
+        "pyarrow",
+        "parquet",
+        "jupyterlab",
+        "adjustText",
+        "pygmt"
     ],
-    include_package_data=True,  # This ensures non-Python files are included
+    include_package_data=True,
     package_data={
-        'pyDTDM': ['cpt/*.cpt'],  # Include all .cpt files in the cpt folder
+        "pyDTDM": ["cpt/*.cpt"],  # Include CPT color files
     },
-    test_suite='tests',  # Where your tests are located
+    test_suite="tests",
 )

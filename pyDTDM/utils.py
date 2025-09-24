@@ -17,6 +17,7 @@ import shapely
 import math
 from scipy.stats import binned_statistic_2d
 import xarray as xr
+import rioxarray
 import rasterio
 
 # cptpath = 'cmaps'
@@ -35,10 +36,8 @@ from geopy.distance import geodesic
 
 from scipy.interpolate import interp1d
 
-
-
-
-
+from matplotlib.colors import LinearSegmentedColormap
+from sklearn.neighbors import BallTree
 from sklearn.neighbors import KNeighborsRegressor
 from scipy.spatial import cKDTree
 from scipy.ndimage import gaussian_filter
@@ -46,7 +45,11 @@ from scipy.ndimage import gaussian_filter
 
 
 
+
+
 def post_process_grid(data, output_path,data_typ, n_neighbors=3, threshold_distance=40):
+    
+    ### advanced interpolation technique
     # Load the main NetCDF file
     # data = xr.open_dataset(file_path)
     elevation = data
@@ -129,6 +132,67 @@ def find_filename_with_number(folder, target_number):
             return file_name
     
     return None
+
+
+
+def sjoin_nearest_geodesic_points(gdf1, gdf2, k=1,distance_col='dist_m'):
+    """
+    Nearest neighbor join between two global point GeoDataFrames (EPSG:4326),
+    with prefix added only for columns that clash with gdf1.
+
+    Parameters
+    ----------
+    gdf1 : GeoDataFrame (points)
+        First point set (will keep geometry of gdf1).
+    gdf2 : GeoDataFrame (points)
+        Second point set (to find nearest point from).
+    k : int
+        Number of nearest neighbors (default=1).
+
+    Returns
+    -------
+    GeoDataFrame
+        gdf1 merged with nearest point(s) info from gdf2, including distance in meters.
+    """
+
+    # Ensure both GeoDataFrames are in EPSG:4326
+    gdf1 = gdf1.to_crs("EPSG:4326").copy()
+    gdf2 = gdf2.to_crs("EPSG:4326").copy()
+
+    # Convert to radians for BallTree
+    gdf1_coords = np.deg2rad(np.column_stack([gdf1.geometry.y, gdf1.geometry.x]))
+    gdf2_coords = np.deg2rad(np.column_stack([gdf2.geometry.y, gdf2.geometry.x]))
+
+    # Build BallTree on gdf2 points
+    tree = BallTree(gdf2_coords, metric="haversine")
+
+    # Query nearest neighbors
+    dist, ind = tree.query(gdf1_coords, k=k)
+
+    # Convert distance from radians to meters
+    dist_m = dist * 6371000  # Earth radius in meters
+
+    # Build nearest point DataFrame
+    nearest_df = gdf2.iloc[ind.flatten()].reset_index(drop=True)
+
+    # Drop geometry from nearest_df to avoid conflict
+    nearest_df = nearest_df.drop(columns="geometry")
+
+    # Identify overlapping columns
+    overlap_cols = [col for col in nearest_df.columns if col in gdf1.columns]
+    if overlap_cols:
+        nearest_df = nearest_df.rename(columns={col: f"nearest_{col}" for col in overlap_cols})
+
+    # Attach results to gdf1
+    result = gdf1.reset_index(drop=True).copy()
+    result[distance_col] = dist_m.flatten()
+    result = gpd.GeoDataFrame(
+        pd.concat([result, nearest_df], axis=1), crs="EPSG:4326"
+    )
+
+    return result
+
+
 
 
 
@@ -304,8 +368,8 @@ def pointinpoly(points_gdf, polygons_gdf):
 
 def df_to_NetCDF(x,y,z, statistic='mean',  grid_resolution=0.1, clip=(None,None)):
     # Define bin edges (lat and lon) based on your data range and desired bin sizes
-    lon_bin_edges = np.arange(-180, 180 + grid_resolution, grid_resolution)
-    lat_bin_edges = np.arange(-90, 90 + grid_resolution, grid_resolution)
+    lon_bin_edges = np.arange(x.min(), x.max() + grid_resolution, grid_resolution)
+    lat_bin_edges = np.arange(y.min(), y.max()+ grid_resolution, grid_resolution)
 
     # Calculate binned statistics (mean, median, etc.)
     arr, _, _, _ = binned_statistic_2d(
@@ -388,31 +452,107 @@ def minimum_distance(gdf,lat_ref,lon_ref):
             
         return min_dist,lat,lon   
 
-def calculate_wma(gdfs):
-    # Number of GeoDataFrames
-    n = len(gdfs)
+# def calculate_wma(gdfs, exclude_cols=None):
+#     print("Using weighted mean")
+#     # Number of GeoDataFrames
+#     n = len(gdfs)
     
-    # Ensure there are enough GeoDataFrames to apply the moving average
+#     if n == 0:
+#         raise ValueError("The list of GeoDataFrames is empty.")
+    
+#     if exclude_cols is None:
+#         exclude_cols = []
+
+#     # Calculate weights in descending order
+#     weights = np.arange(n, 0, -1)  # Weights from n to 1
+#     weight_sum = weights.sum()
+
+#     # Initialize with the first GeoDataFrame
+#     wma_df = gdfs[0].copy()
+
+#     # Apply WMA only on numeric columns not in exclude_cols
+#     for column in wma_df.columns:
+#         if column not in exclude_cols and wma_df[column].dtype.kind in 'bifc':
+#             weighted_sum = np.zeros(len(wma_df))
+#             for i, gdf in enumerate(gdfs):
+#                 weighted_sum += gdf[column] * weights[i]
+#             wma_df[column] = weighted_sum / weight_sum
+
+#     return wma_df
+
+def calculate_wma(gdfs, exclude_cols=None):
+    print("Using weighted mean")
+    n = len(gdfs)
     if n == 0:
         raise ValueError("The list of GeoDataFrames is empty.")
 
-    # Calculate weights in descending order
-    weights = np.arange(n, 0, -1)  # Weights from n to 1
-    weight_sum = weights.sum()
+    if exclude_cols is None:
+        exclude_cols = []
 
-    # Initialize the WMA GeoDataFrame with the same structure as the first GeoDataFrame
+    weights = np.arange(n, 0, -1)  # Weights from n to 1
+
     wma_df = gdfs[0].copy()
 
-    # Apply the weights and sum the weighted values
     for column in wma_df.columns:
-        if wma_df[column].dtype.kind in 'bifc':  # Only for numerical columns
+        if column not in exclude_cols and wma_df[column].dtype.kind in 'bifc':
             weighted_sum = np.zeros(len(wma_df))
+            weight_tracker = np.zeros(len(wma_df))  # Track total valid weights
+
             for i, gdf in enumerate(gdfs):
-                weighted_sum += gdf[column] * weights[i]
-            wma_df[column] = weighted_sum / weight_sum
+                col_values = gdf[column].to_numpy()
+                mask = ~np.isnan(col_values)  # valid values
+                weighted_sum[mask] += col_values[mask] * weights[i]
+                weight_tracker[mask] += weights[i]
 
-    return wma_df  
+            # Avoid divide-by-zero where all are NaN
+            with np.errstate(invalid='ignore'):
+                wma_df[column] = weighted_sum / weight_tracker
 
+    return wma_df
+
+
+
+# def mean_gdfs(gdfs, exclude_cols=None):
+
+#     print("Using mean")
+#     if len(gdfs) == 0:
+#         raise ValueError("The list of GeoDataFrames is empty.")
+    
+#     if exclude_cols is None:
+#         exclude_cols = []
+    
+#     # Start with a copy of the first GeoDataFrame
+#     mean_df = gdfs[0].copy()
+
+#     # Iterate over columns
+#     for column in mean_df.columns:
+#         if column not in exclude_cols and mean_df[column].dtype.kind in 'bifc':
+#             stacked = np.vstack([gdf[column].values for gdf in gdfs])
+#             mean_df[column] = stacked.mean(axis=0)
+#         # else: keep the column from the first gdf unchanged
+    
+#     return mean_df
+
+def mean_gdfs(gdfs, exclude_cols=None):
+    print("Using mean")
+    if len(gdfs) == 0:
+        raise ValueError("The list of GeoDataFrames is empty.")
+    
+    if exclude_cols is None:
+        exclude_cols = []
+    
+    # Start with a copy of the first GeoDataFrame
+    mean_df = gdfs[0].copy()
+
+    # Iterate over columns
+    for column in mean_df.columns:
+        if column not in exclude_cols and mean_df[column].dtype.kind in 'bifc':
+            stacked = np.vstack([gdf[column].values for gdf in gdfs])
+            # Ignore NaNs when computing the mean
+            mean_df[column] = np.nanmean(stacked, axis=0)
+        # else: keep the column from the first gdf unchanged
+    
+    return mean_df
 
 def interpolate_and_save_as_geotiff(folder, param_type, start_time, end_time, depths, required_time_step=1):
     
@@ -689,8 +829,12 @@ def generate_points(lat, lon, angle, num_points=5, distance=20):
 def nan_gaussian_filter(data, sigma,radius=5):
     data_filled = np.nan_to_num(data, nan=0.0)
     weights = ~np.isnan(data)
-    smoothed_data = gaussian_filter(data_filled * weights, sigma=sigma,radius=radius)
-    weights_smooth = gaussian_filter(weights.astype(float), sigma=sigma,radius=radius)
+    # smoothed_data = gaussian_filter(data_filled * weights, sigma=sigma,radius=radius)
+    # weights_smooth = gaussian_filter(weights.astype(float), sigma=sigma,radius=radius)
+
+    smoothed_data = gaussian_filter(data_filled * weights, sigma=sigma)
+    weights_smooth = gaussian_filter(weights.astype(float), sigma=sigma)
+
     return smoothed_data / weights_smooth
 
 
@@ -724,10 +868,7 @@ def plotgdf(gdf,gplot,column=None,mollweide=False,time=0,cbar=False,quick=True,*
     central_longitude=kwargs.get('central_longitude',0)
     figsize=kwargs.get('figsize',(12,8))
     
-    
-    
-    
-    
+
     
     fig = plt.figure(figsize=figsize, dpi=300)
     # gplot = gplately.PlotTopologies(model, coastlines=model.coastlines, continents=model.continents, time=time)
@@ -750,10 +891,14 @@ def plotgdf(gdf,gplot,column=None,mollweide=False,time=0,cbar=False,quick=True,*
         gplot.time = time # Ma
         gplot.plot_continents(ax, facecolor='grey', alpha=0.2)
         gplot.plot_coastlines(ax, color='skyblue',alpha=0.3)
-        gplot.plot_ridges_and_transforms(ax, color='red')
+        gplot.plot_ridges_and_transforms(ax, color='k')
         gplot.plot_trenches(ax, color='k')
         gplot.plot_subduction_teeth(ax, color='k')
-    
+
+        gplot.plot_ridges(ax, color='k')
+        gplot.plot_transforms(ax, color='k')
+        gplot.plot_misc_boundaries(ax, color='k')
+
     
         # Plot the GeoDataFrame
     
@@ -1170,3 +1315,73 @@ def interpolate_value(depth,values,interp_depth=np.arange(0, -70, -1)):
     interp_value = interpolated_func(interp_depth)
 
     return interp_value,interp_depth
+
+
+
+def readcpt(filename, n_colors=256):
+    """
+    Read a GMT/PyGMT .cpt file (with 'r/g/b' format) and return a matplotlib colormap.
+    Works for continuous CPTs and ignores B/F/N lines.
+    """
+    cpt_data = []
+    with open(filename, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if line == '' or line.startswith(('#','B','F','N')):
+                continue
+            parts = line.split()
+            if len(parts) < 5:
+                continue
+            try:
+                x1 = float(parts[0])
+                x2 = float(parts[2])
+                r1, g1, b1 = [float(c)/255 for c in parts[1].split('/')]
+                r2, g2, b2 = [float(c)/255 for c in parts[3].split('/')]
+                cpt_data.append([x1, r1, g1, b1, x2, r2, g2, b2])
+            except:
+                # skip lines that can't be parsed
+                continue
+    
+    if len(cpt_data) == 0:
+        raise ValueError(f"No valid color data found in {filename}")
+    
+    # Interpolate colors
+    x_min = min(row[0] for row in cpt_data)
+    x_max = max(row[4] for row in cpt_data)
+    xs = np.linspace(x_min, x_max, n_colors)
+    color_list = []
+    
+    for xi in xs:
+        for row in cpt_data:
+            if row[0] <= xi <= row[4]:
+                t = (xi - row[0]) / (row[4] - row[0] + 1e-12)
+                r = row[1] + t * (row[5] - row[1])
+                g = row[2] + t * (row[6] - row[2])
+                b = row[3] + t * (row[7] - row[3])
+                color_list.append((r, g, b))
+                break
+    
+    return LinearSegmentedColormap.from_list("cpt_colormap", color_list, N=n_colors)
+
+
+def nc_to_tiff(input_filename,outputfile):
+    # Load data
+    slab_dep = xr.open_dataarray(input_filename)
+
+    # Assign CRS (WGS84) and spatial dimensions
+    slab_dep = slab_dep.rio.write_crs("EPSG:4326", inplace=True)
+
+    # Compute affine transform
+    res_x = float(slab_dep['x'][1] - slab_dep['x'][0])
+    res_y = float(slab_dep['y'][1] - slab_dep['y'][0])
+
+    # rioxarray requires descending y-coordinates (top to bottom)
+    if slab_dep.y[0] < slab_dep.y[-1]:
+        slab_dep = slab_dep[::-1]
+
+    transform = from_origin(float(slab_dep['x'][0]), float(slab_dep['y'][0]), res_x, res_y)
+    slab_dep.rio.write_transform(transform, inplace=True)
+
+    # Save as GeoTIFF
+    slab_dep.rio.to_raster(outputfile)
+    print ("Conversion Complete")

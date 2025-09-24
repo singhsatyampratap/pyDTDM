@@ -10,7 +10,7 @@ Follow these steps to set up the environment and install the necessary dependenc
 1. **Create a new conda environment:**
 
     ```bash
-    conda create --name pyDTDM python=3.9
+    conda create --name pyDTDM python=3.11
     ```
 
 2. **Activate the environment:**
@@ -28,7 +28,7 @@ Follow these steps to set up the environment and install the necessary dependenc
 4. **Install additional dependencies using `pip`:**
 
     ```bash
-    pip install .
+    pip install . -e
     ```
 
 ## Usage

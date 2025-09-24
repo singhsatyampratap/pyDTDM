@@ -1,4 +1,13 @@
-1. conda create --name pyDTDM python=3.9      
-2. conda activate pyDTDM
-3. conda install -c conda-forge pygplates
-4. pip install .
+# Create new environment
+conda create -n EBMTest311 python=3.11
+conda activate EBMTest311
+
+# Install dependencies (use conda-forge for heavy geo libs)
+conda install -c conda-forge numpy scipy pandas geopandas gplately PlateTectonicTools \
+    matplotlib seaborn cartopy cmcrameri stripy shapely xarray rasterio geopy \
+    scikit-learn tensorflow pytorch keras pygmt gmt pyarrow parquet jupyterlab
+
+pip install interpret pickle5 adjustText
+
+# Install your library
+pip install -e .
