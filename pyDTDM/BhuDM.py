@@ -372,16 +372,9 @@ class PlateKinematicsParameters:
 
 
         
-        ### we will now need all the tectonics plates that will be used to filter the subducting and overridding plates
-        resolved_topologies = ptt.resolve_topologies.resolve_topologies_into_features(
-                self.rotation_model,self.topology_features, reconstruction_time)#,anchor_plate_id=self.anchor_plate_id)
-        topologies, ridge_transforms, ridges, transforms, trenches, trench_left, trench_right, other = resolved_topologies
+   
         
-        topologies_gdf=create_geodataframe_topologies(topologies, reconstruction_time)
-        topologies_gdf=topologies_gdf.set_crs(DEFAULT_CRS)
-
-        
-        
+        topologies_gdf=self.get_topologies_gdf(reconstruction_time)
         
         
         lons,lats=generate_mesh(refinement_levels=mesh_refinement_level) ### we will generate a grid in spherical coordinates
@@ -419,7 +412,16 @@ class PlateKinematicsParameters:
     
 
         
-  
+    def get_topologies_gdf(self,reconstruction_time):
+         ### we will now need all the tectonics plates that will be used to filter the subducting and overridding plates
+        resolved_topologies = ptt.resolve_topologies.resolve_topologies_into_features(
+                self.rotation_model,self.topology_features, reconstruction_time)#,anchor_plate_id=self.anchor_plate_id)
+        topologies, ridge_transforms, ridges, transforms, trenches, trench_left, trench_right, other = resolved_topologies
+        
+        topologies_gdf=create_geodataframe_topologies(topologies, reconstruction_time)
+        topologies_gdf=topologies_gdf.set_crs(DEFAULT_CRS)
+        return topologies_gdf
+ 
 
 
     def get_plate_kinematics(self,training_df,

@@ -47,11 +47,8 @@ from scipy.ndimage import gaussian_filter
 
 
 
-def post_process_grid(data, output_path,data_typ, n_neighbors=3, threshold_distance=40):
-    
-    ### advanced interpolation technique
-    # Load the main NetCDF file
-    # data = xr.open_dataset(file_path)
+def post_process_grid(data, n_neighbors=3, threshold_distance=5):
+
     elevation = data
 
     # Get the coordinates of the valid data points and their values
@@ -366,10 +363,18 @@ def pointinpoly(points_gdf, polygons_gdf):
     return filtered_polygons_gdf
     
 
-def df_to_NetCDF(x,y,z, statistic='mean',  grid_resolution=0.1, clip=(None,None)):
+def df_to_NetCDF(x,y,z, statistic='mean',  
+                 grid_resolution=0.1, 
+                 clip=(None,None),
+                 lon_bin_edges=None,
+                 lat_bin_edges=None):
+    
+
+    if lon_bin_edges is None:
     # Define bin edges (lat and lon) based on your data range and desired bin sizes
-    lon_bin_edges = np.arange(x.min(), x.max() + grid_resolution, grid_resolution)
-    lat_bin_edges = np.arange(y.min(), y.max()+ grid_resolution, grid_resolution)
+        lon_bin_edges = np.arange(x.min(), x.max() + grid_resolution, grid_resolution)
+    if lat_bin_edges is None:
+        lat_bin_edges = np.arange(y.min(), y.max()+ grid_resolution, grid_resolution)
 
     # Calculate binned statistics (mean, median, etc.)
     arr, _, _, _ = binned_statistic_2d(
@@ -399,13 +404,13 @@ def df_to_NetCDF(x,y,z, statistic='mean',  grid_resolution=0.1, clip=(None,None)
         dims=['Latitude', 'Longitude']
     )
     return da
-    
-    def create_directory_if_not_exists(directory_path):
-        if not os.path.exists(directory_path):
-            os.makedirs(directory_path)
-            print(f"Created directory: {directory_path}")
-        else:
-            print(f"Directory already exists: {directory_path}")
+
+def create_directory_if_not_exists(directory_path):
+    if not os.path.exists(directory_path):
+        os.makedirs(directory_path)
+        print(f"Created directory: {directory_path}")
+    else:
+        print(f"Directory already exists: {directory_path}")
 
 
 def haversine_distance(lat1, lon1, lat2, lon2):
@@ -832,8 +837,8 @@ def nan_gaussian_filter(data, sigma,radius=5):
     # smoothed_data = gaussian_filter(data_filled * weights, sigma=sigma,radius=radius)
     # weights_smooth = gaussian_filter(weights.astype(float), sigma=sigma,radius=radius)
 
-    smoothed_data = gaussian_filter(data_filled * weights, sigma=sigma)
-    weights_smooth = gaussian_filter(weights.astype(float), sigma=sigma)
+    smoothed_data = gaussian_filter(data_filled * weights, sigma=sigma,truncate=radius)
+    weights_smooth = gaussian_filter(weights.astype(float), sigma=sigma,truncate=radius)
 
     return smoothed_data / weights_smooth
 
@@ -1119,7 +1124,7 @@ def create_geodataframe_topologies(topologies, reconstruction_time):
     recon_gpd['reconstruction_time'] = reconstruction_times
     recon_gpd['gpml_type'] = gpml_types
     # recon_gpd=recon_gpd.set_geometry(geometrys)
-    recon_gpd = recon_gpd.set_crs(epsg=4326)
+    recon_gpd = recon_gpd.set_crs("epsg:4326")
     
     return recon_gpd
 
