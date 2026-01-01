@@ -15,7 +15,7 @@ InputFiles:
            - '1000-410-Divergence_Merdith_et_al.gpml'
            - '1000-410-Topologies_Merdith_et_al.gpml'
            - '1000-410-Transforms_Merdith_et_al.gpml'
-        agegrid: "/Volumes/SatyamData/Merdith1Ga/AgeGrid_1Ga_OptimisedMantleFrame_run48/unmasked"
+        agegrid: "//Volumes/SatyamData/Merdith1Ga/Merdith_etal_OPTIMISED_gplately2/seafloor_grid_output/SEAFLOOR_AGE/masked/"
          # relative to 'model_dir'
         coastline_file: 'StaticGeometries/GSHHS_l_coastlines.shp'
         static_polygon: 'shapes_static_polygons.shp'
@@ -45,6 +45,9 @@ InputFiles:
            - '1000-410-Divergence_Merdith_et_al.gpml'
            - '1000-410-Topologies_Merdith_et_al.gpml'
            - '1000-410-Transforms_Merdith_et_al.gpml'
+    climate_parameters:
+        rotation_files:
+           - '1000_0_rotfile_Merdith_et_al.rot'
     # --- training files
     Raster:
         ETOPO_FILE: "/Users/ssin4735/Documents/PROJECT/PhD Project/Codes and Data/Part 2/A_DEEPTIMETOPO/Data/Smoothed ETopo.tif"  # ETOPO grid in meters (can be NetCDF or GeoTiff)
@@ -60,12 +63,12 @@ OutputFiles:
 # --- set parameters
 TimeParameters:
     time_min: 0.
-    time_max: 525.
+    time_max: 200.
     time_step: 1
 
 
 Parameters:
-    time_window_size: 15 #### size of time window for calculating mean
+    time_window_size: 25 #### size of time window for calculating mean
     weighted_mean: True  #### whether you wanted to use a weighted mean. In Weighted Mean, recent times will have greator weights
     mesh_refinement_level: 9  # The initial positions of crustal points are evenly distributed within the designated region. At mesh refinement level zero, the points are approximately 20 degrees apart. Each increase in the density level results in a halving of the spacing between points. Higher refinement level will take longer time to run.
     mantle_optimised_id: 0    ### Specify reference frame here
