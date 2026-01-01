@@ -42,6 +42,7 @@ This project requires several Python libraries to run successfully. Below is a l
 - **cptpath**: Custom path for color maps (cpt files).
 - **get_cpt**: A utility for getting cpt color maps.
 - **time**: A module that provides various time-related functions.
+- **bottleneck**
 
 ### Installation
 
