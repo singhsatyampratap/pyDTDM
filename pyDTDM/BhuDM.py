@@ -1,3 +1,77 @@
+"""
+BhuDM - Deep Time Data Mining Module
+=====================================
+
+This module provides comprehensive tools for analyzing spatiotemporal geological data 
+across deep time, integrating plate tectonic reconstructions with mantle dynamics, 
+climate parameters, and machine learning models.
+
+Core Classes:
+-------------
+- MantleParameters: Extract and interpolate mantle convection parameters (temperature, 
+  velocity, viscosity) from CitcomS outputs
+- PlateKinematicsParameters: Analyze plate tectonic reconstructions, subduction zones, 
+  and plate velocities
+- BhuRaster: Extract raster data at specific point locations
+- ClimateParameters: Calculate time spent in climate belts (humid/arid zones)
+- RFModel: Random Forest regression model for geological predictions
+- EBMModel: Explainable Boosting Machine for interpretable machine learning
+
+Main Features:
+--------------
+- Spatiotemporal data extraction across geological time
+- Parallel processing for efficient computation
+- Integration with pyGPlates and GPlately for plate reconstructions
+- Support for multiple data formats (NetCDF, GeoTIFF, shapefiles)
+- Machine learning tools with model interpretability
+
+Dependencies:
+-------------
+- pygplates: Plate tectonic reconstruction
+- gplately: Plate reconstruction tools and data management
+- pandas/geopandas: Data manipulation and geospatial operations
+- scikit-learn: Machine learning algorithms
+- interpret: Explainable Boosting Machines
+- rasterio/xarray: Raster data processing
+- joblib: Parallel processing
+
+Author: Satyam Pratap Singh
+Email: singhsatyampratap@gmail.com
+License: GNU General Public License v3.0
+
+Example Usage:
+--------------
+>>> import pyDTDM as pdtdm
+>>> import pandas as pd
+>>> 
+>>> # Extract mantle parameters
+>>> mantle = pdtdm.MantleParameters(
+...     original_folder='CitcomS_data/temperature',
+...     new_folder='processed/temperature',
+...     parameter_type='temperature',
+...     depths=[100, 300, 600],
+...     starttime=0,
+...     endtime=100,
+...     timestep=10
+... )
+>>> mantle.interpolate_mantle_data(n_jobs=-1, required_timesteps=list(range(0, 101, 1)))
+>>> 
+>>> # Create plate kinematics model
+>>> pk = pdtdm.PlateKinematicsParameters(
+...     model_name='Muller2019',
+...     working_directory='./plate_models'
+... )
+>>> 
+>>> # Train EBM model
+>>> model = pdtdm.EBMModel(
+...     df=training_data,
+...     remove_variable='geometry',
+...     max_bins=256,
+...     n_jobs=-1
+... )
+>>> model.fit()
+"""
+
 import pygplates
 import pandas as pd
 import geopandas as gpd
@@ -36,12 +110,134 @@ from sklearn.impute import KNNImputer
 from .utils import *
 from .constant import DEFAULT_CRS, ED_PROJ
 from rasterio.transform import from_origin
+from gplately import PlateModelManager
+from gplately.commands.list_models import get_model_names
 
 
 
 
 
 class MantleParameters:
+    """
+    Extract and process mantle convection parameters from CitcomS outputs.
+    
+    This class handles the extraction, interpolation, and sampling of mantle 
+    convection parameters (temperature, velocity components, viscosity) across 
+    geological time. It processes CitcomS model outputs and enables efficient 
+    spatiotemporal data extraction at specific locations and times.
+    
+    Parameters
+    ----------
+    original_folder : str
+        Path to the folder containing original CitcomS output files organized 
+        by time (e.g., 'CitcomS_outputs/temperature/0/', 'CitcomS_outputs/temperature/10/', ...)
+    new_folder : str
+        Path where interpolated GeoTIFF files will be saved. Directory structure 
+        will be created automatically if it doesn't exist
+    parameter_type : str
+        Type of mantle parameter to process. Common values:
+        - 'temperature': Mantle temperature in Kelvin or Celsius
+        - 'vx', 'vy', 'vz': Velocity components (cm/yr)
+        - 'viscosity': Dynamic viscosity (Pa·s)
+    depths : list of int or float
+        List of depth levels (in km) to process (e.g., [100, 300, 600, 900])
+    starttime : int or float
+        Starting geological time (Ma) for data processing
+    endtime : int or float
+        Ending geological time (Ma) for data processing
+    timestep : int or float
+        Time interval (Myr) between available CitcomS outputs
+    topology_filenames : list of str, optional
+        List of paths to topology feature collection files (.gpml, .gpmlz)
+        Required only if plate reconstruction is needed
+    rotation_filenames : list of str, optional
+        List of paths to rotation files (.rot)
+        Required only if plate reconstruction is needed
+    static_polygons : str, optional
+        Path to static polygons file
+    agegrid : str, optional
+        Path to age grid file
+    coastlines : str, optional
+        Path to coastlines file
+    continents : str, optional
+        Path to continents file
+    anchor_plate_id : int, default=0
+        Plate ID to use as reference frame (typically 0 for absolute reference frame)
+    
+    Attributes
+    ----------
+    folder : str
+        Original data folder path
+    new_folder : str
+        Processed data folder path
+    param_type : str
+        Parameter type being processed
+    depths : list
+        Depth levels for data extraction
+    rotation_model : pygplates.RotationModel
+        Plate rotation model (if provided)
+    topology_features : pygplates.FeatureCollection
+        Topological features (if provided)
+    model : gplately.PlateReconstruction
+        Complete plate reconstruction model (if rotation and topology provided)
+    
+    Methods
+    -------
+    get_mantle_parameters(df, reconstruction_time, depth_wise=True, n_jobs=-1)
+        Extract mantle parameters at specific locations and time
+    get_time()
+        Get available time steps from the original data folder
+    interpolate_mantle_data(n_jobs, required_timesteps)
+        Interpolate mantle data to create continuous time series
+    
+    Examples
+    --------
+    >>> # Initialize mantle parameters extractor
+    >>> mantle = MantleParameters(
+    ...     original_folder='CitcomS/temperature',
+    ...     new_folder='processed/temperature',
+    ...     parameter_type='temperature',
+    ...     depths=[100, 300, 600, 900],
+    ...     starttime=0,
+    ...     endtime=100,
+    ...     timestep=10
+    ... )
+    >>> 
+    >>> # Interpolate data for all time steps
+    >>> mantle.interpolate_mantle_data(
+    ...     n_jobs=-1,
+    ...     required_timesteps=list(range(0, 101, 1))
+    ... )
+    >>> 
+    >>> # Extract parameters at specific locations
+    >>> import pandas as pd
+    >>> df = pd.DataFrame({
+    ...     'Longitude': [120.5, 130.2, 140.8],
+    ...     'Latitude': [35.6, 40.2, 45.3]
+    ... })
+    >>> df_with_temp = mantle.get_mantle_parameters(
+    ...     df=df,
+    ...     reconstruction_time=50,
+    ...     depth_wise=True,
+    ...     n_jobs=-1
+    ... )
+    >>> print(df_with_temp.columns)
+    ['Longitude', 'Latitude', 'temperature_100', 'temperature_300', 
+     'temperature_600', 'temperature_900']
+    
+    Notes
+    -----
+    - CitcomS output files should be organized in time-stamped folders
+    - The class automatically handles missing data by filling with NaN
+    - Parallel processing is used for efficiency when n_jobs > 1 or n_jobs = -1
+    - Interpolation creates intermediate time steps using linear interpolation
+    - All raster outputs are in GeoTIFF format with standard geographic projection
+    
+    See Also
+    --------
+    BhuRaster : For extracting data from single raster files
+    PlateKinematicsParameters : For plate tectonic analysis
+    """
     
     def __init__(self, original_folder,new_folder, parameter_type, depths, starttime,endtime,timestep,
     topology_filenames=None, 
@@ -92,37 +288,100 @@ class MantleParameters:
             
         
     def get_mantle_parameters(self, df, reconstruction_time, depth_wise=True, n_jobs=-1):
-            coordinates = [(x, y) for x, y in zip(df['Longitude'].values, df['Latitude'].values)]
-            time=reconstruction_time
-            def process_depth(new_folder, depth,param_type,time):
-                raster_file = f"{new_folder}/{time}/{param_type}_{depth}.tif"
-            
-                if not os.path.exists(raster_file):
-                    # If the raster file doesn't exist, fill the column with NaN
-                    return (f"{param_type}_{depth}", np.nan * len(df))
-                else:
-                    mantle_data = rasterio.open(raster_file)
-                    mantle = list(mantle_data.sample(coordinates))
-                    mantle = [mantle[i][0] for i in range(len(mantle))]
-                    return (f"{param_type}_{depth}", mantle)
+        """
+        Extract mantle parameters at specific geographic locations and time.
+        
+        This method samples mantle parameter values from pre-processed GeoTIFF files
+        at the locations specified in the input DataFrame. It supports parallel 
+        processing for efficient extraction across multiple depth levels.
+        
+        Parameters
+        ----------
+        df : pd.DataFrame
+            DataFrame containing point locations with 'Longitude' and 'Latitude' columns
+        reconstruction_time : int or float
+            Geological time (Ma) at which to extract mantle parameters
+        depth_wise : bool, default=True
+            If True, keeps separate columns for each depth level (e.g., 'temperature_100',
+            'temperature_300'). If False, calculates the mean across all depths and stores
+            in a single column
+        n_jobs : int, default=-1
+            Number of CPU cores to use for parallel processing.
+            -1 uses all available cores, 1 for serial processing
+        
+        Returns
+        -------
+        pd.DataFrame
+            Input DataFrame with added columns for mantle parameters.
+            If depth_wise=True: adds '{param_type}_{depth}' columns for each depth
+            If depth_wise=False: adds single '{param_type}' column with depth-averaged values
+        
+        Examples
+        --------
+        >>> import pandas as pd
+        >>> df = pd.DataFrame({
+        ...     'Longitude': [120, 130, 140],
+        ...     'Latitude': [30, 35, 40]
+        ... })
+        >>> df_with_params = mantle.get_mantle_parameters(
+        ...     df=df,
+        ...     reconstruction_time=50,
+        ...     depth_wise=True,
+        ...     n_jobs=-1
+        ... )
+        
+        Notes
+        -----
+        - Missing or non-existent raster files result in NaN values
+        - Coordinates outside raster bounds will also return NaN
+        - Parallel processing significantly speeds up extraction for large datasets
+        """
+        coordinates = [(x, y) for x, y in zip(df['Longitude'].values, df['Latitude'].values)]
+        time=reconstruction_time
+        def process_depth(new_folder, depth,param_type,time):
+            raster_file = f"{new_folder}/{time}/{param_type}_{depth}.tif"
+        
+            if not os.path.exists(raster_file):
+                # If the raster file doesn't exist, fill the column with NaN
+                return (f"{param_type}_{depth}", np.nan * len(df))
+            else:
+                mantle_data = rasterio.open(raster_file)
+                mantle = list(mantle_data.sample(coordinates))
+                mantle = [mantle[i][0] for i in range(len(mantle))]
+                return (f"{param_type}_{depth}", mantle)
 
-            results = Parallel(n_jobs=n_jobs)(delayed(process_depth)(self.new_folder, depth,self.param_type,time) for depth in self.depths)
+        results = Parallel(n_jobs=n_jobs)(delayed(process_depth)(self.new_folder, depth,self.param_type,time) for depth in self.depths)
 
-            for col_name, data in results:
-                df[col_name] = data
+        for col_name, data in results:
+            df[col_name] = data
 
-            if not depth_wise:
-                # Calculate the mean across all depths
-                df[self.param_type] = df[[f"{self.param_type}_{depth}" for depth in self.depths]].mean(axis=1)
+        if not depth_wise:
+            # Calculate the mean across all depths
+            df[self.param_type] = df[[f"{self.param_type}_{depth}" for depth in self.depths]].mean(axis=1)
 
-                # Drop the original {self.param_type}_{depth} columns
-                df.drop(columns=[f"{self.param_type}_{depth}" for depth in self.depths], inplace=True)
+            # Drop the original {self.param_type}_{depth} columns
+            df.drop(columns=[f"{self.param_type}_{depth}" for depth in self.depths], inplace=True)
 
-            return df
+        return df
 
     
     
     def get_time(self):
+        """
+        Get available time steps from the original data folder.
+        
+        Scans the original data folder for time-stamped subdirectories and filters
+        them based on the specified start and end times.
+        
+        Returns
+        -------
+        np.ndarray
+            Sorted array of available time steps (Ma) within the specified range
+        
+        Notes
+        -----
+        Results are stored in self.times attribute for reuse
+        """
         times=glob.glob(f"{self.folder}/*")
         self.times=np.sort([int(time.split('/')[-1]) for time in times])
         self.times = self.times[(self.times >= self.starttime) & (self.times <= self.endtime)]
@@ -134,7 +393,37 @@ class MantleParameters:
         
     
     def interpolate_mantle_data(self,n_jobs,required_timesteps):
+        """
+        Interpolate mantle data to create continuous time series.
         
+        This method processes the original CitcomS outputs, converts them to GeoTIFF
+        format, and performs temporal interpolation to generate data at all required
+        time steps. This is essential for creating continuous spatiotemporal datasets.
+        
+        Parameters
+        ----------
+        n_jobs : int
+            Number of CPU cores to use for parallel processing.
+            -1 uses all available cores
+        required_timesteps : list of int or float
+            List of all time steps (Ma) for which interpolated data should be generated.
+            Should be continuous (e.g., list(range(0, 101, 1)) for 0-100 Ma at 1 Myr intervals)
+        
+        Notes
+        -----
+        - Original CitcomS data is first converted to GeoTIFF format
+        - Linear temporal interpolation is used between available time steps
+        - Output files are organized as: {new_folder}/{time}/{param_type}_{depth}.tif
+        - Empty folders are automatically cleaned up after processing
+        - This operation can be computationally intensive for large datasets
+        
+        Examples
+        --------
+        >>> mantle.interpolate_mantle_data(
+        ...     n_jobs=-1,
+        ...     required_timesteps=list(range(0, 101, 1))
+        ... )
+        """
         
         if not hasattr(self, 'times'):
             self.times=self.get_time()
@@ -149,11 +438,71 @@ class MantleParameters:
         
     
 class BhuRaster:
+    """
+    Extract values from raster files at specific point locations.
+    
+    This is a simple utility class for sampling raster datasets (GeoTIFF, NetCDF, etc.)
+    at point locations specified in a DataFrame. It's useful for extracting single
+    variables like elevation, age grids, or other gridded datasets.
+    
+    Parameters
+    ----------
+    folder_location : str
+        Path to the raster file to extract data from
+    Raster_Type : str, optional
+        Name/label for the parameter being extracted. This will be used as the
+        column name in the output DataFrame
+    
+    Attributes
+    ----------
+    folder : str
+        Path to the raster file
+    Raster_Type : str
+        Parameter name/type
+    
+    Methods
+    -------
+    get_parameters(df)
+        Extract raster values at DataFrame point locations
+    
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> # Extract elevation data
+    >>> elevation_raster = BhuRaster(
+    ...     folder_location='data/etopo1.tif',
+    ...     Raster_Type='elevation'
+    ... )
+    >>> df = pd.DataFrame({
+    ...     'Longitude': [120, 130, 140],
+    ...     'Latitude': [30, 35, 40]
+    ... })
+    >>> df_with_elev = elevation_raster.get_parameters(df)
+    >>> print(df_with_elev.columns)
+    ['Longitude', 'Latitude', 'elevation']
+    
+    See Also
+    --------
+    MantleParameters : For extracting mantle parameters across time and depth
+    """
     def __init__(self,folder_location,Raster_Type=None):
         self.folder=folder_location
         self.Raster_Type=Raster_Type
         
     def get_parameters(self,df):
+        """
+        Extract raster values at point locations.
+        
+        Parameters
+        ----------
+        df : pd.DataFrame
+            DataFrame with 'Longitude' and 'Latitude' columns
+        
+        Returns
+        -------
+        pd.DataFrame
+            Input DataFrame with added column containing raster values
+        """
         coordinates = [(x, y) for x, y in zip(df['Longitude'].values, df['Latitude'].values)]
         data_file= rasterio.open(self.folder)
         data = list(data_file.sample(coordinates))
@@ -190,26 +539,222 @@ def add_time_step(time, reconstructed_time_span, all_sz_df):
     nearest = nearest.set_index(nearest['Index'])
     return nearest, indices        
 
-class PlateKinematicsParameters:
-    def __init__(self, topology_filenames, rotation_filenames,static_polygons,agegrid=None,coastlines=None,continents=None,anchor_plate_id=0):
-        
-        
-        self.static_polygons=static_polygons
-        self.agegrid=agegrid
-        self.coastlines=coastlines
-        self.continents=continents
-        self.anchor_plate_id=anchor_plate_id
-        
-        self.rotation_model = pygplates.RotationModel(rotation_filenames,default_anchor_plate_id=anchor_plate_id)
-        self.topology_features = pygplates.FeatureCollection()
-        for topology_filename in topology_filenames:
-                self.topology_features.add( pygplates.FeatureCollection(topology_filename))
 
-        self.model = gplately.PlateReconstruction(self.rotation_model, self.topology_features, self.static_polygons,anchor_plate_id=self.anchor_plate_id)
+class PlateKinematicsParameters:
+    """
+    Analyze plate tectonic reconstructions and extract kinematic parameters.
+    
+    This class provides comprehensive tools for working with plate tectonic models,
+    including subduction zone analysis, plate velocity calculations, and spatiotemporal
+    reconstruction of geological features. It integrates with pyGPlates and GPlately
+    to enable sophisticated plate kinematic analyses.
+    
+    Parameters
+    ----------
+    model_name : str, optional
+        Name of a pre-defined plate model available through GPlately 
+        (e.g., 'Muller2019', 'Matthews2016', 'Seton2012').
+        If provided, the model will be automatically downloaded
+    topology_filenames : list of str, optional
+        Paths to topology feature files (.gpml, .gpmlz).
+        Required if model_name is not provided
+    rotation_filenames : list of str, optional
+        Paths to rotation files (.rot).
+        Required if model_name is not provided
+    static_polygons : str, optional
+        Path to static polygons file
+    agegrids : str or list, optional
+        Path(s) to age grid files
+    coastlines : str, optional
+        Path to coastlines file
+    continents : str, optional
+        Path to continents file
+    COB : str, optional
+        Path to continent-ocean boundary file
+    srgrids : str or list, optional
+        Path(s) to spreading rate grid files
+    raster_folder_dict : dict, default={}
+        Dictionary mapping raster types to folder paths
+    vector_files_dict : dict, default={}
+        Dictionary mapping vector types to file paths
+    working_directory : str, optional
+        Working directory for downloading and storing plate models
+    anchor_plate_id : int, default=0
+        Reference plate ID (0 for absolute reference frame)
+    start_time : int or float, default=0
+        Start time (Ma) for analyses
+    end_time : int or float, default=1000
+        End time (Ma) for analyses
+    timestep : int or float, default=1
+        Time increment (Myr) for analyses
+    
+    Attributes
+    ----------
+    model : gplately.PlateReconstruction
+        Complete plate reconstruction model
+    rotation_model : pygplates.RotationModel
+        Plate rotation model
+    topology_features : pygplates.FeatureCollection
+        Topological features collection
+    
+    Methods
+    -------
+    download_model()
+        Download a pre-defined plate model from GPlately
+    get_gpts_from_df(dataframe, time=0)
+        Create GPlately Points object from DataFrame
+    get_mean_subduction(all_sz_df, reconstruction_time, window_size, ...)
+        Calculate time-averaged subduction parameters
+    create_points_around_trench(reconstruction_time, all_subduction_df, ...)
+        Generate point cloud around subduction trenches
+    get_subductiondf(reconstruction_time, ...)
+        Extract detailed subduction zone parameters
+    
+    Examples
+    --------
+    >>> # Using a pre-defined model
+    >>> pk = PlateKinematicsParameters(
+    ...     model_name='Muller2019',
+    ...     working_directory='./plate_models',
+    ...     start_time=0,
+    ...     end_time=250,
+    ...     timestep=1
+    ... )
+    >>> 
+    >>> # Using custom files
+    >>> pk = PlateKinematicsParameters(
+    ...     topology_filenames=['topologies.gpml'],
+    ...     rotation_filenames=['rotations.rot'],
+    ...     static_polygons='static_polygons.gpml',
+    ...     anchor_plate_id=0
+    ... )
+    >>> 
+    >>> # Extract subduction parameters
+    >>> sz_data = pk.get_subductiondf(
+    ...     reconstruction_time=50,
+    ...     tessellation_threshold_deg=0.1
+    ... )
+    
+    Notes
+    -----
+    - Either model_name OR (topology_filenames AND rotation_filenames) must be provided
+    - Using model_name automatically downloads data through GPlately
+    - All kinematic calculations use the specified anchor plate as reference
+    - Subduction zone analyses include convergence rates, slab ages, and trench geometry
+    
+    See Also
+    --------
+    MantleParameters : For extracting mantle convection parameters
+    ClimateParameters : For climate-related analyses
+    """
+   
+    def __init__(self,model_name=None,
+                 topology_filenames=None, 
+                 rotation_filenames=None,
+                 static_polygons=None,
+                 agegrids=None,
+                 coastlines=None,
+                 continents=None,
+                 COB=None,
+                 srgrids=None,
+                 raster_folder_dict={},
+                 vector_files_dict={},
+                 working_directory=None,
+                 anchor_plate_id=0,
+                 start_time=0,
+                 end_time=1000, 
+                 timestep=1):
+        
+        self.anchor_plate_id=anchor_plate_id
+        self.model_name=model_name
+        self.rasters=raster_folder_dict
+        self.vectors=vector_files_dict
+        self.start_time=start_time
+        self.end_time=end_time
+        self.time_step=timestep
+        self.agegrids=agegrids
+        self.agegrid=agegrids
+
+        self.working_directory=working_directory
+        
+        
+        if topology_filenames is not None and rotation_filenames is not None:
+            self.topology_features = pygplates.FeatureCollection()
+            for topology_filename in topology_filenames:
+                self.topology_features.add(pygplates.FeatureCollection(topology_filename))
+            self.static_polygons=static_polygons
+            self.coastlines=coastlines
+            self.continents=continents
+            self.agegrids=agegrids
+            self.COB=COB
+            self.srgrids=srgrids
+
+            self.rotation_model = pygplates.RotationModel(rotation_filenames,default_anchor_plate_id=anchor_plate_id)
+            self.model = gplately.PlateReconstruction(self.rotation_model, 
+                                                    self.topology_features, 
+                                                    self.static_polygons,
+                                                    anchor_plate_id=self.anchor_plate_id)
+        elif model_name in get_model_names():
+            self.download_model()
+        else:
+            raise ValueError("Either provide valid model_name or provide topology_filenames and rotation_filenames")    
+    
+
+    
+    def download_model(self):
+        pm_manager = PlateModelManager()
+        self.model = pm_manager.get_model(self.model_name)
+        assert self.model
+        self.model.set_data_dir(f"{self.working_directory}/plate-model-repo")
+        
+        
+        ### topologies
+        self.rotation_filenames = self.model.get_rotation_model()
+        self.rotation_model = pygplates.RotationModel(self.rotation_filenames,default_anchor_plate_id=self.anchor_plate_id)
+        self.static_polygons=self.model.get_layer("StaticPolygons")
+        self.topology_filenames=self.model.get_layer("Topologies")
+        self.topology_features = pygplates.FeatureCollection()
+        for topology_filename in self.topology_filenames:
+            self.topology_features.add(pygplates.FeatureCollection(topology_filename))
+
+        
+        # self.rotation_model = pygplates.RotationModel(rotation_filenames,default_anchor_plate_id=anchor_plate_id)
+        self.model = gplately.PlateReconstruction(self.rotation_model, 
+                                                self.topology_features, 
+                                                self.static_polygons,
+                                                anchor_plate_id=self.anchor_plate_id)
+    
+
+# class PlateKinematicsParameters:
+#     def __init__(self, topology_filenames, rotation_filenames,static_polygons,agegrid=None,coastlines=None,continents=None,anchor_plate_id=0):
+        
+        
+#         self.static_polygons=static_polygons
+#         self.agegrid=agegrid
+#         self.coastlines=coastlines
+#         self.continents=continents
+#         self.anchor_plate_id=anchor_plate_id
+        
+#         self.rotation_model = pygplates.RotationModel(rotation_filenames,default_anchor_plate_id=anchor_plate_id)
+#         self.topology_features = pygplates.FeatureCollection()
+#         for topology_filename in topology_filenames:
+#                 self.topology_features.add( pygplates.FeatureCollection(topology_filename))
+
+#         self.model = gplately.PlateReconstruction(self.rotation_model, self.topology_features, self.static_polygons,anchor_plate_id=self.anchor_plate_id)
         
     
     def __repr__(self):
-           return f"PlateKinematicsParameters(topology_filenames={self.topology_features}, rotation_filenames={self.rotation_model}, static_polygons={self.static_polygons}, agegrid={self.agegrid}, coastlines={self.coastlines}, continents={self.continents}, anchor_plate_id={self.anchor_plate_id})"
+           return (
+               "PlateKinematicsParameters(" 
+               f"topology_filenames={getattr(self, 'topology_features', None)}, "
+               f"rotation_filenames={getattr(self, 'rotation_model', None)}, "
+               f"static_polygons={getattr(self, 'static_polygons', None)}, "
+               f"agegrids={getattr(self, 'agegrids', None)}, "
+               f"coastlines={getattr(self, 'coastlines', None)}, "
+               f"continents={getattr(self, 'continents', None)}, "
+               f"anchor_plate_id={getattr(self, 'anchor_plate_id', None)}"
+               ")"
+           )
     
    
     def get_gpts_from_df(self, dataframe, time=0):
@@ -460,7 +1005,7 @@ class PlateKinematicsParameters:
         return training_points_all
         
     
-    def get_subductiondf(self, reconstruction_time,  tessellation_threshold_deg=0.1,velocity_delta_time=1):
+    def get_subductiondf(self, reconstruction_time,  tessellation_threshold_deg=0.1,velocity_delta_time=1, distance_normal_agegrid=5):
         """
         Calculate subduction zone parameters and create a GeoDataFrame with the results.
 
@@ -527,7 +1072,6 @@ class PlateKinematicsParameters:
             'Trench Longitude': subduction_lon,
             'Convergence Rate': subduction_convergence,
             'Migration Rate': subduction_migration,
-            'Subduction Velocity': subduction_vel,
             'Obliquity Angle': subduction_angle,
             'Subduction Normal Angle': subduction_norm,
             'Subduction Length': subduction_length,
@@ -538,8 +1082,10 @@ class PlateKinematicsParameters:
             # 'Plate Thickness': plate_thickness,
             'Nearest Trench Edge': distance_to_nearest_edge_of_trench,
             'Start Edge Trench': distance_to_start_edge_of_trench,
+            'Convergence Velocity Magnitude': subduction_vel,
             'Convergence Velocity Orthogonal': convergence_velocity_orth,
             'Convergence Velocity Parallel': convergence_velocity_par,
+            'Trench Velocity Magnitude': subduction_data[:, 4],
             'Trench Velocity Orthogonal': trench_absolute_velocity_orth,
             'Trench Velocity Parallel': trench_absolute_velocity_par,
             'Subducting Velocity Orthogonal': subducting_absolute_velocity_orth,
@@ -550,37 +1096,37 @@ class PlateKinematicsParameters:
         
         
         
-        if self.agegrid!=None:
+        if self.agegrids!=None:
             
             # Construct age grid file path
             # try:
-            try:
-                age_grid_file = find_filename_with_number(self.agegrid,reconstruction_time)
-                print(f"Using agegrid file : {age_grid_file}")
-                # Interpolate seafloor age at subduction one locations
-                age_raster = gplately.Raster(data=age_grid_file, plate_reconstruction=self.model, time=reconstruction_time)
-  
+            # try:
+            age_grid_file = find_filename_with_number(self.agegrids,reconstruction_time)
+            print(f"Using agegrid file : {age_grid_file}")
+            # Interpolate seafloor age at subduction one locations
+            age_raster = gplately.Raster(data=age_grid_file, plate_reconstruction=self.model, time=reconstruction_time)
+            age_raster.fill_NaNs(inplace=True)
+            sampled_lats= subduction_lat-distance_normal_agegrid*np.sin(np.radians(subduction_angle))
+            sampled_lons= subduction_lon-distance_normal_agegrid*np.cos(np.radians(subduction_angle))
+            age_interp = age_raster.interpolate(sampled_lons, sampled_lats)
+
+            # Calculate plate thickness from seafloor age
+            plate_thickness = gplately.tools.plate_isotherm_depth(age_interp)
+
+            # Calculate subduction volume rate (in km^3/yr)
+            subduction_vol_rate = plate_thickness * subduction_length * subduction_convergence  # in m^3/yr
+            subduction_vol_rate *= 1e-9  # convert to km^3/yr
+
+            # Calculate subduction flux
+            subduction_flux = plate_thickness * subduction_convergence
+
+            subduction['Subduction Volume Rate']=subduction_vol_rate
+            subduction['Plate Thickness']=plate_thickness
+            subduction['Subduction Flux']=subduction_flux
+        
             
-                age_raster.fill_NaNs(inplace=True)
-                age_interp = age_raster.interpolate(subduction_lon, subduction_lat)
-
-                # Calculate plate thickness from seafloor age
-                plate_thickness = gplately.tools.plate_isotherm_depth(age_interp)
-
-                # Calculate subduction volume rate (in km^3/yr)
-                subduction_vol_rate = plate_thickness * subduction_length * subduction_convergence  # in m^3/yr
-                subduction_vol_rate *= 1e-9  # convert to km^3/yr
-
-                # Calculate subduction flux
-                subduction_flux = plate_thickness * subduction_convergence
-
-                subduction['Subduction Volume Rate']=subduction_vol_rate
-                subduction['Plate Thickness']=plate_thickness
-                subduction['Subduction Flux']=subduction_flux
-            
-            
-            except Exception as e:
-                print("No Seafloor age grid found!")
+            # except Exception as e:
+            #     print("No Seafloor age grid found!")
                         
       
     
@@ -684,6 +1230,77 @@ def assign_belt(latitude, lat_band):
 
     
 class ClimateParameters:
+    """
+    Calculate climate-related parameters across geological time.
+    
+    This class computes the time spent by geological features (e.g., subduction zones,
+    mountain ranges) in specific climate belts (humid, arid) through geological time.
+    It uses plate tectonic reconstructions to track features through paleoclimate zones.
+    
+    Parameters
+    ----------
+    topology_filenames : list of str, optional
+        Paths to topology feature files (.gpml, .gpmlz)
+    rotation_filenames : list of str, optional
+        Paths to rotation files (.rot)
+    static_polygons : str, optional
+        Path to static polygons file
+    agegrid : str, optional
+        Path to age grid file
+    coastlines : str, optional
+        Path to coastlines file
+    continents : str, optional
+        Path to continents file
+    anchor_plate_id : int, default=0
+        Reference plate ID for reconstructions
+    
+    Attributes
+    ----------
+    model : gplately.PlateReconstruction
+        Plate reconstruction model
+    rotation_model : pygplates.RotationModel
+        Rotation model for plate motions
+    topology_features : pygplates.FeatureCollection
+        Topological features
+    
+    Methods
+    -------
+    get_gpts_from_df(dataframe)
+        Create GPlately Points from DataFrame
+    get_time_spent_in_humid_belt(original_plate_model, df, reconstruction_time, 
+                                  window_size, lat_band, use_trench=True, drop_fraction=0.8)
+        Calculate time spent in humid climate belt
+    
+    Examples
+    --------
+    >>> # Initialize climate parameters
+    >>> climate = ClimateParameters(
+    ...     topology_filenames=['topologies.gpml'],
+    ...     rotation_filenames=['rotations.rot'],
+    ...     static_polygons='static_polygons.gpml'
+    ... )
+    >>> 
+    >>> # Calculate time in humid belt for subduction zones
+    >>> df_with_climate = climate.get_time_spent_in_humid_belt(
+    ...     original_plate_model=plate_model,
+    ...     df=subduction_data,
+    ...     reconstruction_time=50,
+    ...     window_size=15,
+    ...     lat_band=(0, 30),  # Tropical humid belt
+    ...     use_trench=True
+    ... )
+    
+    Notes
+    -----
+    - Humid belts are typically defined as equatorial/tropical latitudes (0-30°)
+    - The method tracks features back in time and counts time steps in target latitude band
+    - Using use_trench=True samples at trench locations rather than point locations
+    - drop_fraction reduces sampling density for computational efficiency
+    
+    See Also
+    --------
+    PlateKinematicsParameters : For plate kinematic analyses
+    """
     
     def __init__(self, topology_filenames=None,rotation_filenames=None, static_polygons=None,agegrid=None, coastlines=None, continents=None,anchor_plate_id=0):
     
@@ -983,6 +1600,94 @@ def cumulative_subduction_params(training_data_folder,starttime,endtime,elevatio
     
 
 class RFModel:
+    """
+    Random Forest regression model for geological predictions.
+    
+    This class provides a wrapper around scikit-learn's RandomForestRegressor,
+    optimized for geological applications such as paleotopography reconstruction,
+    resource prospectivity, and other spatiotemporal predictions.
+    
+    Parameters
+    ----------
+    training_df : pd.DataFrame
+        Training dataset containing features and target variable
+    training_variables : list of str
+        List of column names to use as predictor variables
+    target_variable : str
+        Column name of the target variable to predict
+    n_estimators : int, default=100
+        Number of trees in the random forest
+    max_depth : int, default=8
+        Maximum depth of each tree
+    min_samples_split : int, default=10
+        Minimum samples required to split an internal node
+    min_samples_leaf : int, default=5
+        Minimum samples required to be at a leaf node
+    max_features : str or int, default='sqrt'
+        Number of features to consider for best split
+        - 'sqrt': sqrt(n_features)
+        - 'log2': log2(n_features)
+        - int: exact number of features
+    parallel : int, default=-1
+        Number of CPU cores for parallel processing (-1 uses all cores)
+    random_state : int, default=22
+        Random seed for reproducibility
+    
+    Attributes
+    ----------
+    df : pd.DataFrame
+        Training dataset (deduplicated)
+    model : RandomForestRegressor
+        Trained random forest model
+    columns : list
+        Feature column names used in training
+    
+    Methods
+    -------
+    fit()
+        Train the random forest model
+    predict(df)
+        Make predictions on new data
+    plot_difference(plate_model, kwargs1, kwargs2, quick=True)
+        Visualize prediction differences on a map
+    
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> # Prepare training data
+    >>> training_data = pd.DataFrame({
+    ...     'Longitude': [...],
+    ...     'Latitude': [...],
+    ...     'distance_to_trench': [...],
+    ...     'convergence_rate': [...],
+    ...     'elevation': [...]  # target
+    ... })
+    >>> 
+    >>> # Initialize and train model
+    >>> rf_model = RFModel(
+    ...     training_df=training_data,
+    ...     training_variables=['distance_to_trench', 'convergence_rate'],
+    ...     target_variable='elevation',
+    ...     n_estimators=200,
+    ...     max_depth=10,
+    ...     parallel=-1
+    ... )
+    >>> rf_model.fit()
+    >>> 
+    >>> # Make predictions
+    >>> predictions = rf_model.predict(test_data)
+    
+    Notes
+    -----
+    - Automatically handles missing values using KNN imputation
+    - Performs 70-30 train-test split for validation
+    - Prints RMSE on test set after training
+    - Adds 'Predicted {target}' and 'Difference' columns to training data after fitting
+    
+    See Also
+    --------
+    EBMModel : Explainable Boosting Machine for interpretable predictions
+    """
     def __init__(self, training_df, training_variables, target_variable, n_estimators=100, max_depth=8,min_samples_split=10,min_samples_leaf=5,max_features='sqrt',parallel=-1,random_state=22):
         """
         Initialize the RFTopoModel with the given parameters.
@@ -1237,8 +1942,118 @@ class RFModel:
 
 class EBMModel:
     """
-    Wrapper class for Explainable Boosting Regressor (EBM) tailored for a DataFrame.
-    Automatically handles variable removal and initialization of the EBM model.
+    Explainable Boosting Machine (EBM) for interpretable geological predictions.
+    
+    This class provides a wrapper around Microsoft's InterpretML ExplainableBoostingRegressor,
+    designed for geological applications requiring model interpretability. EBM combines 
+    high accuracy with transparency, making it ideal for scientific applications where
+    understanding model behavior is as important as prediction accuracy.
+    
+    EBM is a glass-box model that provides:
+    - Individual feature importance and shape functions
+    - Pairwise interaction detection and visualization
+    - Smooth, interpretable predictions
+    - High accuracy comparable to black-box models
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Training dataset containing features and target variable
+    remove_variable : str or None, optional
+        Column name to exclude from features (e.g., 'geometry', metadata columns)
+    max_bins : int, default=2048
+        Maximum number of bins for feature discretization. Higher values capture
+        more detail but increase training time
+    interactions : int, default=None
+        Number of automatic interaction terms to detect. None uses default
+    max_interactions : int, default=64
+        Maximum number of interaction bins
+    learning_rate : float, default=1.1
+        Boosting learning rate. Lower values may improve generalization
+    max_rounds : int, default=15000
+        Maximum number of boosting rounds
+    outer_bags : int, default=30
+        Number of outer bagging rounds for ensembling
+    inner_bags : int, default=0
+        Number of inner bagging rounds
+    smoothing_rounds : int, default=500
+        Number of rounds for smoothing feature shapes
+    max_leaves : int, default=6
+        Maximum leaves per feature tree
+    random_state : int, default=22
+        Random seed for reproducibility
+    n_jobs : int, default=-1
+        Number of CPU cores for parallel processing (-1 uses all cores)
+    
+    Attributes
+    ----------
+    df : pd.DataFrame
+        Training dataset
+    model : ExplainableBoostingRegressor
+        Trained EBM model
+    columns : list
+        Feature column names used in training
+    fitted : bool
+        Whether the model has been trained
+    
+    Methods
+    -------
+    fit()
+        Train the EBM model
+    predict(df)
+        Make predictions on new data
+    plot_difference(plate_model, kwargs1, kwargs2, quick=True)
+        Visualize actual vs predicted values on maps
+    
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> from interpret import show
+    >>> 
+    >>> # Initialize EBM model
+    >>> ebm_model = EBMModel(
+    ...     df=training_data,
+    ...     remove_variable='geometry',
+    ...     max_bins=256,
+    ...     interactions=10,
+    ...     learning_rate=0.01,
+    ...     n_jobs=-1
+    ... )
+    >>> 
+    >>> # Train model
+    >>> ebm_model.fit()
+    >>> 
+    >>> # Make predictions
+    >>> predictions = ebm_model.predict(test_data)
+    >>> 
+    >>> # Visualize global explanations
+    >>> ebm_global = ebm_model.model.explain_global()
+    >>> show(ebm_global)
+    >>> 
+    >>> # Visualize local (individual) explanations
+    >>> ebm_local = ebm_model.model.explain_local(test_data[:10], predictions[:10])
+    >>> show(ebm_local)
+    
+    Notes
+    -----
+    - EBM models are inherently interpretable (glass-box, not black-box)
+    - Feature shape functions show how each variable affects predictions
+    - Interaction terms capture non-linear relationships between features
+    - Automatically handles missing values using mean imputation
+    - Performs 70-30 train-test split for validation
+    - Model explanations can be visualized using InterpretML's show() function
+    
+    References
+    ----------
+    - Nori et al. (2019). InterpretML: A Unified Framework for Machine Learning 
+      Interpretability. https://arxiv.org/abs/1909.09223
+    - Lou et al. (2013). Accurate Intelligible Models with Pairwise Interactions.
+      KDD 2013.
+    
+    See Also
+    --------
+    RFModel : Random Forest regression model
+    interpret.show : For visualizing model explanations
     """
 
     def __init__(self, df, remove_variable=None, max_bins=2048,interactions=None, max_interactions=64,

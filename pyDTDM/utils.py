@@ -1,3 +1,90 @@
+"""
+Utility Functions for pyDTDM
+=============================
+
+This module provides a comprehensive collection of utility functions for geospatial 
+data processing, plate tectonic analysis, and geological data manipulation. It supports
+operations on raster and vector data, geometric transformations, nearest neighbor 
+analyses, and file format conversions.
+
+Core Functionality:
+-------------------
+- **Geospatial Processing**: Grid interpolation, KNN filling, geodesic distance calculations
+- **Geometric Operations**: Polygon creation, point generation, subduction teeth geometry
+- **File I/O**: NetCDF to GeoTIFF conversion, CPT colormap reading, raster operations
+- **Plate Tectonics**: Topology processing, overriding plate identification, profile creation
+- **Nearest Neighbor**: Geodesic joins, spatial indexing with BallTree
+- **Plotting**: Reconstructed GeoDataFrame visualization, colorbar generation
+- **Data Gridding**: Convert point data to regular grids with various statistics
+
+Key Functions:
+--------------
+Grid Processing:
+    - post_process_grid: Fill NaN gaps using KNN interpolation
+    - df_to_NetCDF: Convert scattered points to gridded NetCDF
+    - nan_gaussian_filter: Gaussian smoothing handling NaN values
+
+Geometric:
+    - get_subduction_teeth: Create triangular subduction teeth polygons
+    - sjoin_nearest_geodesic_points: Geodesic nearest neighbor join
+    - generate_mesh: Create icosahedral mesh for global sampling
+    - multipoints_from_polygon: Generate point cloud from polygon
+
+Plate Tectonics:
+    - create_geodataframe_topologies: Convert pygplates topologies to GeoDataFrame
+    - get_overriding_pid: Identify overriding plate IDs at subduction zones
+    - poly_around_sub: Create polygons around subduction zones
+
+File Operations:
+    - nc_to_tiff: Convert NetCDF to GeoTIFF
+    - readcpt: Load GMT/PyGMT color palette files
+    - interpolate_and_save_as_geotiff: Temporal interpolation of rasters
+
+Distance & Proximity:
+    - haversine_distance: Great circle distance calculation
+    - minimum_distance: Find nearest point in GeoDataFrame
+    - calc_dist: Simple Euclidean distance
+
+Statistics:
+    - calculate_wma: Weighted moving average for GeoDataFrames
+    - mean_gdfs: Average multiple GeoDataFrames
+
+Visualization:
+    - plotgdf: Plot reconstructed GeoDataFrames with plate features
+    - plot_only_colorbar: Create standalone colorbars
+
+Dependencies:
+-------------
+- pygplates: Plate reconstruction and topology operations
+- geopandas/shapely: Vector geospatial operations
+- rasterio/xarray: Raster data processing
+- scikit-learn: Spatial indexing and interpolation
+- geopy: Geodesic distance calculations
+
+Author: Satyam Pratap Singh
+Email: singhsatyampratap@gmail.com
+License: GNU General Public License v3.0
+
+Examples:
+---------
+>>> import pyDTDM.utils as utils
+>>> import geopandas as gpd
+>>> 
+>>> # Geodesic nearest neighbor join
+>>> result = utils.sjoin_nearest_geodesic_points(
+...     gdf1=points_gdf,
+...     gdf2=trenches_gdf,
+...     k=1,
+...     distance_col='distance_to_trench_m'
+... )
+>>> 
+>>> # Generate global mesh
+>>> lons, lats = utils.generate_mesh(refinement_levels=8)
+>>> 
+>>> # Convert NetCDF to GeoTIFF
+>>> utils.nc_to_tiff('input.nc', 'output.tif')
+"""
+
 import re
 import glob
 import pygplates
@@ -48,6 +135,56 @@ from scipy.ndimage import gaussian_filter
 
 
 def post_process_grid(data, n_neighbors=3, threshold_distance=5):
+    """
+    Fill NaN gaps in gridded data using K-Nearest Neighbors interpolation.
+    
+    This function intelligently fills missing values (NaN) in raster data by finding
+    nearby valid points and interpolating values. Only fills gaps within a specified
+    distance threshold to avoid unrealistic extrapolation.
+    
+    Parameters
+    ----------
+    data : xarray.DataArray
+        Input grid with potential NaN values to fill
+    n_neighbors : int, default=3
+        Number of nearest neighbors to use for interpolation
+    threshold_distance : int or float, default=5
+        Maximum distance (in grid cells) to search for neighbors.
+        NaN values farther than this from valid data remain unfilled
+    
+    Returns
+    -------
+    xarray.DataArray
+        Grid with NaN values filled where possible, maintaining original
+        coordinates and dimensions
+    
+    Examples
+    --------
+    >>> import xarray as xr
+    >>> import numpy as np
+    >>> # Create sample grid with NaN values
+    >>> data = xr.DataArray(
+    ...     np.random.rand(100, 100),
+    ...     dims=['y', 'x']
+    ... )
+    >>> data.values[40:50, 40:50] = np.nan
+    >>> 
+    >>> # Fill gaps
+    >>> filled = post_process_grid(data, n_neighbors=5, threshold_distance=10)
+    >>> print(f"Remaining NaN: {np.isnan(filled.values).sum()}")
+    
+    Notes
+    -----
+    - Uses cKDTree for efficient spatial indexing
+    - Only fills NaN values close to valid data (within threshold_distance)
+    - Preserves original xarray structure and metadata
+    - Prints number of interpolated points for monitoring
+    
+    See Also
+    --------
+    scipy.spatial.cKDTree : Spatial indexing
+    sklearn.neighbors.KNeighborsRegressor : K-NN interpolation
+    """
 
     elevation = data
 
@@ -88,6 +225,18 @@ def post_process_grid(data, n_neighbors=3, threshold_distance=5):
     return elevation_interp
 
 def create_directory_if_not_exists(directory_path):
+    """
+    Create directory and all parent directories if they don't exist.
+    
+    Parameters
+    ----------
+    directory_path : str
+        Path to the directory to create
+    
+    Notes
+    -----
+    Uses os.makedirs with exist_ok=True to avoid errors if directory exists
+    """
     if not os.path.exists(directory_path):
         os.makedirs(directory_path,exist_ok=True)
         print(f"Created directory: {directory_path}")
@@ -98,6 +247,54 @@ def create_directory_if_not_exists(directory_path):
         
         
 def get_subduction_teeth(row, size=1):
+    """
+    Create a triangular polygon representing a subduction tooth symbol.
+    
+    Generates a triangle pointing in the direction of subduction (perpendicular
+    to the trench) based on the subduction normal angle. Used for visualizing
+    subduction polarity on maps.
+    
+    Parameters
+    ----------
+    row : pd.Series or dict
+        Row containing subduction zone information with keys:
+        - 'Trench Longitude': Longitude of trench point
+        - 'Trench Latitude': Latitude of trench point
+        - 'Subduction Normal Angle': Angle perpendicular to trench (degrees)
+    size : float, default=1
+        Size of the triangle in degrees (approximately 111 km per degree)
+    
+    Returns
+    -------
+    shapely.geometry.Polygon
+        Triangular polygon representing subduction tooth
+    
+    Examples
+    --------
+    >>> import pandas as pd
+    >>> from shapely.geometry import Polygon
+    >>> 
+    >>> # Single subduction point
+    >>> sz_data = pd.DataFrame({
+    ...     'Trench Longitude': [140.0],
+    ...     'Trench Latitude': [35.0],
+    ...     'Subduction Normal Angle': [45.0]
+    ... })
+    >>> 
+    >>> # Create tooth geometry
+    >>> tooth = get_subduction_teeth(sz_data.iloc[0], size=1)
+    >>> print(tooth.area)
+    
+    Notes
+    -----
+    - Triangle base is perpendicular to subduction normal
+    - Triangle points in direction of plate subduction
+    - Commonly used with GeoDataFrame.apply() to create tooth column
+    
+    See Also
+    --------
+    PlateKinematicsParameters.get_subductiondf : For obtaining subduction data
+    """
     angle_rad = np.deg2rad(row['Subduction Normal Angle'])
     half_size = size / 2
     center_base = (row['Trench Longitude'], row['Trench Latitude'])
@@ -134,24 +331,68 @@ def find_filename_with_number(folder, target_number):
 
 def sjoin_nearest_geodesic_points(gdf1, gdf2, k=1,distance_col='dist_m'):
     """
-    Nearest neighbor join between two global point GeoDataFrames (EPSG:4326),
-    with prefix added only for columns that clash with gdf1.
-
+    Perform geodesic nearest neighbor spatial join between point GeoDataFrames.
+    
+    Finds the k-nearest neighbors from gdf2 for each point in gdf1 using geodesic
+    (great circle) distances on the sphere. This is crucial for global analyses where
+    Euclidean distances are inaccurate.
+    
     Parameters
     ----------
-    gdf1 : GeoDataFrame (points)
-        First point set (will keep geometry of gdf1).
-    gdf2 : GeoDataFrame (points)
-        Second point set (to find nearest point from).
-    k : int
-        Number of nearest neighbors (default=1).
-
+    gdf1 : gpd.GeoDataFrame
+        Source points GeoDataFrame (EPSG:4326). Geometry is preserved from gdf1
+    gdf2 : gpd.GeoDataFrame  
+        Target points GeoDataFrame (EPSG:4326) to search for nearest neighbors
+    k : int, default=1
+        Number of nearest neighbors to find for each point in gdf1
+    distance_col : str, default='dist_m'
+        Name of column to store distances (in meters)
+    
     Returns
     -------
-    GeoDataFrame
-        gdf1 merged with nearest point(s) info from gdf2, including distance in meters.
+    gpd.GeoDataFrame
+        gdf1 merged with attributes from nearest point(s) in gdf2, including
+        geodesic distance in meters. Overlapping columns from gdf2 are prefixed
+        with 'nearest_'
+    
+    Examples
+    --------
+    >>> import geopandas as gpd
+    >>> from shapely.geometry import Point
+    >>> 
+    >>> # Create sample point datasets
+    >>> points1 = gpd.GeoDataFrame(
+    ...     {'id': [1, 2, 3]},
+    ...     geometry=[Point(120, 30), Point(130, 35), Point(140, 40)],
+    ...     crs='EPSG:4326'
+    ... )
+    >>> 
+    >>> trenches = gpd.GeoDataFrame(
+    ...     {'trench_name': ['Japan', 'Mariana', 'Kurile']},
+    ...     geometry=[Point(142, 38), Point(145, 15), Point(152, 48)],
+    ...     crs='EPSG:4326'
+    ... )
+    >>> 
+    >>> # Find nearest trench to each point
+    >>> result = sjoin_nearest_geodesic_points(
+    ...     points1, trenches, k=1, distance_col='trench_dist_m'
+    ... )
+    >>> print(result[['id', 'trench_name', 'trench_dist_m']])
+    
+    Notes
+    -----
+    - Uses sklearn's BallTree with haversine metric for efficiency
+    - Automatically converts both GeoDataFrames to EPSG:4326
+    - Distance is calculated along great circles (geodesic)
+    - Much more accurate than Euclidean distance for global datasets
+    - Prefixes overlapping column names with 'nearest_' to avoid conflicts
+    - Earth radius used: 6,371,000 meters
+    
+    See Also
+    --------
+    gpd.sjoin_nearest : Euclidean nearest neighbor (inappropriate for global data)
+    sklearn.neighbors.BallTree : Efficient spatial indexing
     """
-
     # Ensure both GeoDataFrames are in EPSG:4326
     gdf1 = gdf1.to_crs("EPSG:4326").copy()
     gdf2 = gdf2.to_crs("EPSG:4326").copy()
@@ -223,22 +464,65 @@ def flatten_list(lis,absolute=False):
 
 
 def generate_mesh(refinement_levels=8, *args, **kwargs):
+    """
+    Generate evenly distributed points on Earth's surface using icosahedral mesh.
     
-    '''
-    This function create discrete points earth surface where the parameters are calculated
+    Creates a quasi-uniform global point distribution by subdividing an icosahedron.
+    Essential for spatially unbiased sampling of geological data across the globe.
     
-    The initial positions of points are evenly distributed within the designated region. 
+    Parameters
+    ----------
+    refinement_levels : int, default=8
+        Mesh refinement level controlling point density:
+        - Level 0: ~20° spacing (~2200 km)
+        - Level 1: ~10° spacing (~1100 km)
+        - Level 2: ~5° spacing (~550 km)
+        - Level 3: ~2.5° spacing (~275 km)
+        - Level 4: ~1.25° spacing (~140 km)
+        - Level 5: ~0.6° spacing (~70 km)
+        - Level 6: ~0.3° spacing (~35 km)
+        - Level 7: ~0.15° spacing (~17 km)
+        - Level 8: ~0.08° spacing (~9 km)
+        Each level halves the spacing between points
+    *args, **kwargs
+        Additional arguments passed to stripy.icosahedral_mesh()
     
-    INPUT:
-    refinement_levels: int
+    Returns
+    -------
+    lons : np.ndarray
+        Longitude values in degrees (-180 to 180)
+    lats : np.ndarray
+        Latitude values in degrees (-90 to 90)
     
+    Examples
+    --------
+    >>> # Create medium-resolution global mesh (~17 km spacing)
+    >>> lons, lats = generate_mesh(refinement_levels=7)
+    >>> print(f"Generated {len(lons)} points")
+    Generated 163842 points
+    >>> 
+    >>> # Use with plate reconstruction
+    >>> import pygplates
+    >>> points = pygplates.MultiPointOnSphere(zip(lats, lons))
     
-    At mesh refinement level zero, the points are approximately 20 degrees apart.
-    Each increase in the density level results in a halving of the spacing between points.
-    Higher refinement level will take longer time to run. 
+    Notes
+    -----
+    - Higher refinement levels exponentially increase point count and computation time
+    - Point count ≈ 10 × 4^refinement_levels + 2
+    - Level 8 generates ~655,000 points (may be slow for large analyses)
+    - Level 5-7 recommended for most geological applications
+    - Points are quasi-uniform but not perfectly regular
+    - Inherits from stripy's icosahedral_mesh implementation
     
+    Warnings
+    --------
+    Refinement levels > 9 may cause memory issues and very long computation times.
     
-    '''
+    See Also
+    --------
+    stripy.spherical_meshes.icosahedral_mesh : Underlying mesh generator
+    PlateKinematicsParameters.get_mean_subduction : Uses mesh for sampling
+    """
     
     degrees = bool(kwargs.pop("degrees", True))
 
@@ -368,7 +652,80 @@ def df_to_NetCDF(x,y,z, statistic='mean',
                  clip=(None,None),
                  lon_bin_edges=None,
                  lat_bin_edges=None):
+    """
+    Convert scattered point data to a regular gridded NetCDF DataArray.
     
+    Bins irregular point data onto a regular lat/lon grid using various statistical
+    aggregations. Essential for creating continuous surfaces from discrete samples.
+    
+    Parameters
+    ----------
+    x : array-like
+        Longitude values of data points
+    y : array-like
+        Latitude values of data points
+    z : array-like
+        Values to grid (elevation, temperature, etc.)
+    statistic : str, default='mean'
+        Statistic to compute in each bin:
+        - 'mean': Average of points in bin
+        - 'median': Median of points
+        - 'std': Standard deviation
+        - 'count': Number of points
+        - 'sum', 'min', 'max': Other aggregations
+    grid_resolution : float, default=0.1
+        Grid spacing in degrees (ignored if bin_edges provided)
+    clip : tuple of (float, float), default=(None, None)
+        (min_value, max_value) to clip output. None means no clipping
+    lon_bin_edges : array-like, optional
+        Custom longitude bin edges. If None, auto-generated from data extent
+    lat_bin_edges : array-like, optional
+        Custom latitude bin edges. If None, auto-generated from data extent
+    
+    Returns
+    -------
+    xarray.DataArray
+        Gridded data with dimensions ['Latitude', 'Longitude'] and coordinates
+        at bin midpoints. NaN where no data exists
+    
+    Examples
+    --------
+    >>> import numpy as np
+    >>> import pandas as pd
+    >>> 
+    >>> # Scattered elevation data
+    >>> df = pd.DataFrame({
+    ...     'lon': np.random.uniform(-180, 180, 10000),
+    ...     'lat': np.random.uniform(-90, 90, 10000),
+    ...     'elevation': np.random.normal(0, 1000, 10000)
+    ... })
+    >>> 
+    >>> # Create 0.5° grid
+    >>> grid = df_to_NetCDF(
+    ...     x=df['lon'],
+    ...     y=df['lat'],
+    ...     z=df['elevation'],
+    ...     statistic='mean',
+    ...     grid_resolution=0.5,
+    ...     clip=(-2000, 5000)
+    ... )
+    >>> 
+    >>> # Save to NetCDF
+    >>> grid.to_netcdf('gridded_elevation.nc')
+    
+    Notes
+    -----
+    - Uses scipy.stats.binned_statistic_2d for efficient gridding
+    - Bins with no data are set to NaN
+    - Coordinates represent bin midpoints
+    - Clipping is applied after gridding
+    - For large datasets, increase grid_resolution for faster processing
+    
+    See Also
+    --------
+    scipy.stats.binned_statistic_2d : Underlying gridding function
+    xarray.DataArray : Output data structure
+    """
 
     if lon_bin_edges is None:
     # Define bin edges (lat and lon) based on your data range and desired bin sizes
@@ -415,7 +772,57 @@ def create_directory_if_not_exists(directory_path):
 
 def haversine_distance(lat1, lon1, lat2, lon2):
     """
-    Calculate the distance between two points (latitude and longitude) using the Haversine formula.
+    Calculate great circle distance between two points using Haversine formula.
+    
+    Computes the shortest distance between two points on Earth's surface,
+    accounting for Earth's curvature. More accurate than Euclidean distance
+    for geographical coordinates.
+    
+    Parameters
+    ----------
+    lat1 : float or array-like
+        Latitude of first point(s) in degrees
+    lon1 : float or array-like
+        Longitude of first point(s) in degrees
+    lat2 : float or array-like
+        Latitude of second point(s) in degrees
+    lon2 : float or array-like
+        Longitude of second point(s) in degrees
+    
+    Returns
+    -------
+    float or np.ndarray
+        Great circle distance in kilometers
+    
+    Examples
+    --------
+    >>> # Distance between New York and London
+    >>> dist = haversine_distance(40.7128, -74.0060, 51.5074, -0.1278)
+    >>> print(f"Distance: {dist:.1f} km")
+    Distance: 5570.2 km
+    >>> 
+    >>> # Vectorized calculation
+    >>> lats1 = np.array([35, 40, 45])
+    >>> lons1 = np.array([135, 140, 145])
+    >>> lats2 = np.array([36, 41, 46])
+    >>> lons2 = np.array([136, 141, 146])
+    >>> distances = haversine_distance(lats1, lons1, lats2, lons2)
+    
+    Notes
+    -----
+    - Assumes spherical Earth with radius 6,371 km
+    - Accurate for most geological applications
+    - For higher precision, consider geopy.distance.geodesic (uses WGS84 ellipsoid)
+    - Vectorized for efficient array operations
+    
+    References
+    ----------
+    https://en.wikipedia.org/wiki/Haversine_formula
+    
+    See Also
+    --------
+    geopy.distance.geodesic : More accurate ellipsoidal distance
+    sjoin_nearest_geodesic_points : Uses similar distance calculation
     """
     R = 6371  # Radius of the Earth in kilometers
 
@@ -486,6 +893,64 @@ def minimum_distance(gdf,lat_ref,lon_ref):
 #     return wma_df
 
 def calculate_wma(gdfs, exclude_cols=None):
+    """
+    Calculate weighted moving average across multiple GeoDataFrames.
+    
+    Computes time-weighted average where recent time steps have higher weights.
+    Useful for time-averaged subduction parameters or other temporal analyses.
+    Handles NaN values by adjusting weights accordingly.
+    
+    Parameters
+    ----------
+    gdfs : list of gpd.GeoDataFrame
+        List of GeoDataFrames to average, ordered from oldest to newest.
+        All must have same structure and index
+    exclude_cols : list of str, optional
+        Column names to exclude from averaging (e.g., 'geometry', 'Latitude').
+        These columns are taken from the first GeoDataFrame
+    
+    Returns
+    -------
+    gpd.GeoDataFrame
+        Weighted average GeoDataFrame with same structure as inputs
+    
+    Examples
+    --------
+    >>> import geopandas as gpd
+    >>> import pandas as pd
+    >>> 
+    >>> # Create sample time series of subduction data
+    >>> gdfs = []
+    >>> for t in range(5):
+    ...     gdf = gpd.GeoDataFrame({
+    ...         'convergence_rate': np.random.rand(100) * 10,
+    ...         'time': t
+    ...     }, geometry=gpd.points_from_xy(
+    ...         np.random.rand(100)*360-180,
+    ...         np.random.rand(100)*180-90
+    ...     ))
+    ...     gdfs.append(gdf)
+    >>> 
+    >>> # Calculate weighted average (recent times weighted higher)
+    >>> wma_gdf = calculate_wma(gdfs, exclude_cols=['time', 'geometry'])
+    
+    Notes
+    -----
+    - Weights decrease linearly from n to 1 (n = number of GeoDataFrames)
+    - Most recent GeoDataFrame (last in list) gets highest weight
+    - Only numeric columns are averaged (excluding those in exclude_cols)
+    - NaN values are handled intelligently: only valid values contribute to weights
+    - Geometry and specified columns are preserved from first GeoDataFrame
+    
+    Warnings
+    --------
+    All GeoDataFrames must have matching indices and column structure
+    
+    See Also
+    --------
+    mean_gdfs : Simple unweighted average of GeoDataFrames
+    PlateKinematicsParameters.get_mean_subduction : Uses this for time averaging
+    """
     print("Using weighted mean")
     n = len(gdfs)
     if n == 0:
@@ -539,6 +1004,35 @@ def calculate_wma(gdfs, exclude_cols=None):
 #     return mean_df
 
 def mean_gdfs(gdfs, exclude_cols=None):
+    """
+    Calculate element-wise mean across multiple GeoDataFrames.
+    
+    Computes simple average of corresponding values across GeoDataFrames,
+    handling NaN values appropriately.
+    
+    Parameters
+    ----------
+    gdfs : list of gpd.GeoDataFrame
+        List of GeoDataFrames to average. All must have same structure
+    exclude_cols : list of str, optional
+        Column names to exclude from averaging (e.g., 'geometry', 'Latitude')
+    
+    Returns
+    -------
+    gpd.GeoDataFrame
+        Mean GeoDataFrame with same structure as inputs
+    
+    Notes
+    -----
+    - Uses np.nanmean to ignore NaN values when computing average
+    - Non-numeric columns and excluded columns preserved from first GeoDataFrame
+    - All GeoDataFrames must have matching structure
+    
+    See Also
+    --------
+    calculate_wma : Weighted average alternative
+    """
+
     print("Using mean")
     if len(gdfs) == 0:
         raise ValueError("The list of GeoDataFrames is empty.")
@@ -560,6 +1054,52 @@ def mean_gdfs(gdfs, exclude_cols=None):
     return mean_df
 
 def interpolate_and_save_as_geotiff(folder, param_type, start_time, end_time, depths, required_time_step=1):
+    """
+    Temporally interpolate raster data between two time steps and save as GeoTIFFs.
+    
+    Creates intermediate time steps between existing rasters using linear interpolation.
+    Essential for creating continuous time series from sparse temporal sampling.
+    
+    Parameters
+    ----------
+    folder : str
+        Base folder containing time-organized rasters:
+        {folder}/{time}/{param_type}_{depth}.tif
+    param_type : str
+        Parameter type (e.g., 'temperature', 'vz', 'viscosity')
+    start_time : int or float
+        Starting time (Ma) with existing raster
+    end_time : int or float
+        Ending time (Ma) with existing raster
+    depths : list of int or float
+        Depth levels (km) to interpolate
+    required_time_step : int or float, default=1
+        Interval (Myr) for creating interpolated time steps
+    
+    Examples
+    --------
+    >>> # Interpolate between 0 Ma and 10 Ma at 1 Myr intervals
+    >>> interpolate_and_save_as_geotiff(
+    ...     folder='mantle_data/temperature',
+    ...     param_type='temperature',
+    ...     start_time=0,
+    ...     end_time=10,
+    ...     depths=[100, 300, 600],
+    ...     required_time_step=1
+    ... )
+    
+    Notes
+    -----
+    - Uses linear interpolation: value(t) = v1 + (v2-v1) * (t-t1)/(t2-t1)
+    - Creates directories automatically for new time steps
+    - Skips if source rasters don't exist
+    - Output rasters use LZW compression
+    - Preserves georeferencing from source rasters
+    
+    See Also
+    --------
+    MantleParameters.interpolate_mantle_data : Higher-level interpolation interface
+    """
     
     initial_time_step=int(end_time-start_time)
     # Loop through each depth
@@ -832,6 +1372,48 @@ def generate_points(lat, lon, angle, num_points=5, distance=20):
 
 
 def nan_gaussian_filter(data, sigma,radius=5):
+    """
+    Apply Gaussian smoothing to data with NaN values.
+    
+    Performs weighted Gaussian filtering that properly handles missing data
+    by adjusting filter weights based on valid data availability.
+    
+    Parameters
+    ----------
+    data : np.ndarray
+        2D array to smooth, may contain NaN values
+    sigma : float
+        Standard deviation of Gaussian kernel (controls smoothing strength)
+    radius : float, default=5
+        Truncation radius in standard deviations
+    
+    Returns
+    -------
+    np.ndarray
+        Smoothed array with same shape as input
+    
+    Examples
+    --------
+    >>> import numpy as np
+    >>> # Create noisy data with gaps
+    >>> data = np.random.rand(100, 100) + np.random.normal(0, 0.1, (100, 100))
+    >>> data[30:40, 30:40] = np.nan
+    >>> 
+    >>> # Smooth with 2-pixel sigma
+    >>> smoothed = nan_gaussian_filter(data, sigma=2, radius=5)
+    
+    Notes
+    -----
+    - Fills NaN with zero before filtering
+    - Tracks valid data locations with binary weights
+    - Normalizes by smoothed weights to handle edge effects
+    - Sigma controls smoothing: larger = smoother
+    - Radius controls filter extent: larger = slower but more accurate
+    
+    See Also
+    --------
+    scipy.ndimage.gaussian_filter : Underlying filter implementation
+    """
     data_filled = np.nan_to_num(data, nan=0.0)
     weights = ~np.isnan(data)
     # smoothed_data = gaussian_filter(data_filled * weights, sigma=sigma,radius=radius)
@@ -845,19 +1427,90 @@ def nan_gaussian_filter(data, sigma,radius=5):
 
 
 def plotgdf(gdf,gplot,column=None,mollweide=False,time=0,cbar=False,quick=True,**kwargs):
-
-    '''This function can be used to plot the reconstructed geodataframe at any time along with topologies and 
-    features. If the data is large it will take a lot of time to plot. Turn quick to True to plot the data faster.
-    However, there may be some issues with the colors.
-
-    gdf: gpd.GeoDataFrame
-    model: gplatey.PlateReconconstruction
-    column: name of the colum to be plotted (str)
-    time: reconstruction time (int)
-    cbar: whether to display colorbar
-
-    '''
+    """
+    Plot reconstructed GeoDataFrame with plate tectonic features.
     
+    Creates publication-quality maps of geological data with plate boundaries,
+    coastlines, and other tectonic features overlaid.
+    
+    Parameters
+    ----------
+    gdf : gpd.GeoDataFrame
+        GeoDataFrame to plot with point geometry
+    gplot : gplately.PlotTopologies
+        GPlately plot object with plate model and features
+    column : str, optional
+        Column name to visualize with colors
+    mollweide : bool, default=False
+        Use Mollweide projection (equal-area) if True, else PlateCarree
+    time : int or float, default=0
+        Reconstruction time (Ma) for plotting plate features
+    cbar : bool, default=False
+        Whether to display colorbar
+    quick : bool, default=True
+        If True, grids data for faster plotting (may lose some detail).
+        If False, plots individual points (slower but more accurate)
+    **kwargs : dict
+        Additional plotting parameters:
+        - cmap : str or colormap, colormap name
+        - vmin, vmax : float, color scale limits
+        - label : str, colorbar label
+        - title : str, plot title
+        - features : bool, whether to plot plate features (default True)
+        - color : str, point color if not using column
+        - markersize : int, point size (default 10)
+        - orientation : str, colorbar orientation ('vertical'/'horizontal')
+        - shrink : float, colorbar shrink factor
+        - extend : str, colorbar extension ('neither'/'both'/'min'/'max')
+        - central_longitude : float, map center longitude (default 0)
+        - figsize : tuple, figure size (default (12,8))
+    
+    Returns
+    -------
+    matplotlib.axes.Axes
+        Axes object for further customization
+    
+    Examples
+    --------
+    >>> import geopandas as gpd
+    >>> import gplately
+    >>> 
+    >>> # Load reconstructed data
+    >>> gdf = gpd.read_file('reconstructed_50Ma.shp')
+    >>> 
+    >>> # Create plot object
+    >>> model = gplately.PlateReconstruction(...)
+    >>> gplot = gplately.PlotTopologies(model, time=50)
+    >>> 
+    >>> # Plot with features
+    >>> ax = plotgdf(
+    ...     gdf, gplot,
+    ...     column='elevation',
+    ...     mollweide=True,
+    ...     time=50,
+    ...     cbar=True,
+    ...     quick=True,
+    ...     cmap='terrain',
+    ...     vmin=-5000,
+    ...     vmax=5000,
+    ...     label='Elevation (m)',
+    ...     figsize=(14, 8)
+    ... )
+    
+    Notes
+    -----
+    - quick=True grids data at 0.2° resolution for faster rendering
+    - Mollweide projection recommended for global equal-area maps
+    - PlateCarree better for regional maps or preserving angles
+    - Automatically plots trenches, ridges, transforms when features=True
+    - High DPI (300) suitable for publications
+    
+    See Also
+    --------
+    gplately.PlotTopologies : Plate feature plotting
+    df_to_NetCDF : Used for quick gridding option
+    """
+
     cmap = kwargs.get('cmap', None)
     vmin = kwargs.get('vmin', None)
     vmax = kwargs.get('vmax', None)
@@ -1039,40 +1692,69 @@ def multipoints_from_shape(gpd_file,resolution=0.1):
 
 
 def create_geodataframe_topologies(topologies, reconstruction_time):
+    """
+    Convert pygplates resolved topologies to GeoDataFrame.
     
+    Transforms pygplates topological features into a GeoDataFrame for easier
+    manipulation and spatial operations. Handles dateline wrapping to avoid
+    plotting artifacts.
     
-    """ 
-   From Nicky's workflows 
+    Parameters
+    ----------
+    topologies : list of pygplates.ResolvedTopologicalBoundary
+        Resolved topological features from pygplates.resolve_topologies()
+    reconstruction_time : int or float
+        Reconstruction time (Ma) for metadata
     
-    This is a function to convert topologies from pygplates into a GeoDataFrame
-    This helps select the closed topological plates ('gpml:TopologicalClosedPlateBoundary',
-    and also helps resolve plotting artefacts from crossing the dateline. 
-    This function does NOT incorporate various plate boundary types into the geodataframe!
+    Returns
+    -------
+    gpd.GeoDataFrame
+        GeoDataFrame with columns:
+        - NAME : Topology name
+        - PLATEID1 : Reconstruction plate ID
+        - PLATEID2 : Conjugate plate ID
+        - FROMAGE : Valid from age (Ma)
+        - TOAGE : Valid to age (Ma)
+        - reconstruction_time : Time of reconstruction
+        - gpml_type : Feature type
+        - geometry : Polygon geometry (EPSG:4326)
     
-    Input: 
-        - pygplates.Feature. This is designed for `topologies`, which comes from:
-              resolved_topologies = ptt.resolve_topologies.resolve_topologies_into_features(
-                                        rotation_model, topology_features, reconstruction_time)
-              topologies, ridge_transforms, ridges, transforms, trenches, trench_left, trench_right, other = resolved_topologies
-        - recontruction time - this is just for safekeeping in the geodataframe!
-    Output: 
-        - gpd.GeoDataFrame of the feature"""
+    Examples
+    --------
+    >>> import pygplates
+    >>> 
+    >>> # Resolve topologies at 50 Ma
+    >>> resolved_topologies = []
+    >>> pygplates.resolve_topologies(
+    ...     topology_features,
+    ...     rotation_model,
+    ...     resolved_topologies,
+    ...     50.0
+    ... )
+    >>> 
+    >>> # Convert to GeoDataFrame
+    >>> topologies_gdf = create_geodataframe_topologies(
+    ...     resolved_topologies,
+    ...     reconstruction_time=50
+    ... )
+    >>> 
+    >>> # Filter to specific plate
+    >>> pacific_plate = topologies_gdf[topologies_gdf['PLATEID1'] == 901]
     
-    # function for getting closed topologies only
-    # i.e., the plates themselves, NOT all the features for plotting!
+    Notes
+    -----
+    - Uses pygplates DateLineWrapper to handle Pacific dateline issues
+    - Clips latitudes to ±89° to avoid polar artifacts
+    - Creates multiple polygons if feature crosses dateline
+    - All geometries in EPSG:4326 (WGS84)
+    - Useful for spatial joins with other geological data
     
-    # # set up the empty geodataframe
-    # recon_gpd = gpd.GeoDataFrame()
-    # recon_gpd['NAME'] = None
-    # recon_gpd['PLATEID1'] = None
-    # recon_gpd['PLATEID2'] = None
-    # recon_gpd['FROMAGE'] = None
-    # recon_gpd['TOAGE'] = None
-    # # recon_gpd['geometry'] = None
-    # recon_gpd['reconstruction_time'] = None
-    # recon_gpd['gpml_type'] = None
+    See Also
+    --------
+    pygplates.resolve_topologies : Create resolved topologies
+    poly_around_sub_ver2 : Uses topologies for plate ID matching
+    """
     
-
     # some empty things to write stuff to
     names                = []
     plateid1s            = []
@@ -1325,8 +2007,43 @@ def interpolate_value(depth,values,interp_depth=np.arange(0, -70, -1)):
 
 def readcpt(filename, n_colors=256):
     """
-    Read a GMT/PyGMT .cpt file (with 'r/g/b' format) and return a matplotlib colormap.
-    Works for continuous CPTs and ignores B/F/N lines.
+    Read GMT/PyGMT .cpt color palette file and convert to matplotlib colormap.
+    
+    Parses GMT color palette files with 'r/g/b' format and creates a continuous
+    matplotlib colormap for use in plotting.
+    
+    Parameters
+    ----------
+    filename : str
+        Path to .cpt file
+    n_colors : int, default=256
+        Number of discrete colors in output colormap
+    
+    Returns
+    -------
+    matplotlib.colors.LinearSegmentedColormap
+        Continuous colormap object
+    
+    Examples
+    --------
+    >>> # Load GMT colormap
+    >>> cmap = readcpt('pyDTDM/cpt/geo.cpt', n_colors=256)
+    >>> 
+    >>> # Use in matplotlib
+    >>> import matplotlib.pyplot as plt
+    >>> plt.scatter(x, y, c=values, cmap=cmap)
+    
+    Notes
+    -----
+    - Ignores comment lines starting with #
+    - Skips B/F/N (background/foreground/NaN) entries
+    - Expects format: value1 r1/g1/b1 value2 r2/g2/b2
+    - RGB values should be in range 0-255
+    - Linearly interpolates between defined colors
+    
+    See Also
+    --------
+    get_cmap : pyDTDM function for loading built-in colormaps
     """
     cpt_data = []
     with open(filename, 'r') as f:
@@ -1370,6 +2087,41 @@ def readcpt(filename, n_colors=256):
 
 
 def nc_to_tiff(input_filename,outputfile):
+    """
+    Convert NetCDF file to GeoTIFF format.
+    
+    Reads a NetCDF file with spatial dimensions and converts to georeferenced
+    GeoTIFF, preserving coordinate system and spatial extent.
+    
+    Parameters
+    ----------
+    input_filename : str
+        Path to input NetCDF file (.nc)
+    outputfile : str
+        Path for output GeoTIFF file (.tif)
+    
+    Examples
+    --------
+    >>> # Convert slab depth model to GeoTIFF
+    >>> nc_to_tiff(
+    ...     'slab2_depth.nc',
+    ...     'slab2_depth.tif'
+    ... )
+    Conversion Complete
+    
+    Notes
+    -----
+    - Assumes WGS84 (EPSG:4326) coordinate system
+    - Expects 'x' and 'y' dimensions for longitude and latitude
+    - Reverses y-coordinates if ascending (GeoTIFF requires descending)
+    - Computes affine transform from coordinate arrays
+    - Uses rioxarray for CRS-aware operations
+    
+    See Also
+    --------
+    xarray.open_dataarray : Read NetCDF
+    rioxarray.to_raster : Write GeoTIFF
+    """
     # Load data
     slab_dep = xr.open_dataarray(input_filename)
 
@@ -1390,3 +2142,80 @@ def nc_to_tiff(input_filename,outputfile):
     # Save as GeoTIFF
     slab_dep.rio.to_raster(outputfile)
     print ("Conversion Complete")
+
+
+
+import matplotlib.pyplot as plt
+from matplotlib.colors import Normalize
+
+def plot_only_colorbar(vmin, vmax, cmap, label, shrink=1.0, extend='neither', orientation='horizontal'):
+    """
+    Create a standalone colorbar without associated plot.
+    
+    Useful for creating separate colorbars for publications or presentations
+    where the colorbar needs to be positioned independently.
+    
+    Parameters
+    ----------
+    vmin : float
+        Minimum value of color scale
+    vmax : float
+        Maximum value of color scale
+    cmap : str or matplotlib.colors.Colormap
+        Colormap name or colormap object
+    label : str
+        Label for the colorbar
+    shrink : float, default=1.0
+        Fraction by which to shrink the colorbar (0-1)
+    extend : str, default='neither'
+        Whether to add extension triangles:
+        - 'neither': no extensions
+        - 'both': extend both ends
+        - 'min': extend minimum end only
+        - 'max': extend maximum end only
+    orientation : str, default='horizontal'
+        Colorbar orientation ('horizontal' or 'vertical')
+    
+    Examples
+    --------
+    >>> # Create horizontal colorbar for elevation
+    >>> plot_only_colorbar(
+    ...     vmin=-5000,
+    ...     vmax=5000,
+    ...     cmap='terrain',
+    ...     label='Elevation (m)',
+    ...     shrink=0.8,
+    ...     extend='both',
+    ...     orientation='horizontal'
+    ... )
+    
+    Notes
+    -----
+    - Figure size automatically adjusts based on orientation
+    - High DPI (300) suitable for publications
+    - Colorbar positioned with padding for readability
+    
+    See Also
+    --------
+    plotgdf : Creates maps with integrated colorbars
+    """
+    fig, ax = plt.subplots(figsize=(6, 1.2) if orientation == 'horizontal' else (1.2, 6), dpi=300)
+    ax.set_visible(False)
+
+    # Create scalar mappable
+    norm = Normalize(vmin=vmin, vmax=vmax)
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+
+    # Colorbar
+    cbar = fig.colorbar(
+        sm,
+        ax=ax,
+        orientation=orientation,
+        pad=0.3,
+        shrink=shrink,
+        extend=extend,
+    )
+    cbar.set_label(label, fontsize=10)
+
+    plt.show()
